@@ -28,8 +28,18 @@ class AudioCaptureManager(
     }
 
     private var audioRecord: AudioRecord? = null
+    private var noiseSuppressor: NoiseSuppressor? = null
+    private var echoCanceler: AcousticEchoCanceler? = null
     private var vad: Vad? = null
+    private val vadLock = Any()
+
     @Volatile private var isRecording = false
+
+    @Volatile
+    var isPaused: Boolean = false
+        private set
+
+    @Volatile private var wasSpeechDetected = false
     private var recordingThread: Thread? = null
 
     init {
@@ -41,7 +51,7 @@ class AudioCaptureManager(
             val sileroConfig = SileroVadModelConfig(
                 model = "vad/silero_vad.onnx",
                 threshold = 0.5f,
-                minSilenceDuration = 0.5f,
+                minSilenceDuration = 0.8f,
                 minSpeechDuration = 0.25f,
                 windowSize = 512,
                 maxSpeechDuration = 30.0f
@@ -56,8 +66,10 @@ class AudioCaptureManager(
                 debug = false
             )
 
-            vad = Vad(context.assets, vadModelConfig)
-            Log.d(TAG, "Sherpa-ONNX Silero VAD initialized successfully")
+            synchronized(vadLock) {
+                vad = Vad(context.assets, vadModelConfig)
+            }
+            Log.d(TAG, "Sherpa-ONNX Silero VAD initialized successfully (minSilenceDuration: 0.8s)")
         } catch (e: Exception) {
             Log.e(TAG, "Failed to initialize Silero VAD", e)
         }
@@ -65,7 +77,10 @@ class AudioCaptureManager(
 
     @SuppressLint("MissingPermission")
     fun startListening() {
-        if (isRecording) return
+        if (isRecording) {
+            Log.d(TAG, "AudioRecord is already running")
+            return
+        }
 
         val minBufSize = AudioRecord.getMinBufferSize(SAMPLE_RATE, CHANNEL_CONFIG, AUDIO_FORMAT)
         val bufferSize = maxOf(minBufSize, SAMPLE_RATE * 2)
@@ -86,37 +101,74 @@ class AudioCaptureManager(
             val sessionId = audioRecord?.audioSessionId ?: 0
             if (sessionId != 0) {
                 if (NoiseSuppressor.isAvailable()) {
-                    NoiseSuppressor.create(sessionId)?.apply { enabled = true }
+                    noiseSuppressor = NoiseSuppressor.create(sessionId)?.apply { enabled = true }
                     Log.d(TAG, "Hardware NoiseSuppressor enabled")
                 }
                 if (AcousticEchoCanceler.isAvailable()) {
-                    AcousticEchoCanceler.create(sessionId)?.apply { enabled = true }
+                    echoCanceler = AcousticEchoCanceler.create(sessionId)?.apply { enabled = true }
                     Log.d(TAG, "Hardware AcousticEchoCanceler enabled")
                 }
             }
 
             audioRecord?.startRecording()
             isRecording = true
-            vad?.reset()
+            isPaused = false
+            wasSpeechDetected = false
+
+            synchronized(vadLock) {
+                vad?.reset()
+            }
 
             recordingThread = thread(name = "DhvaniAudioRecordThread") {
                 val shortBuf = ShortArray(512)
                 val floatBuf = FloatArray(512)
-                var wasSpeechDetected = false
 
                 while (isRecording) {
-                    val read = audioRecord?.read(shortBuf, 0, shortBuf.size) ?: 0
-                    if (read > 0) {
-                        var sumSquare = 0.0
-                        for (i in 0 until read) {
-                            val sample = shortBuf[i] / 32768.0f
-                            floatBuf[i] = sample
-                            sumSquare += (sample * sample)
-                        }
+                    val record = audioRecord ?: break
+                    val read = try {
+                        record.read(shortBuf, 0, shortBuf.size)
+                    } catch (e: Exception) {
+                        Log.e(TAG, "Error reading from AudioRecord", e)
+                        -1
+                    }
 
-                        // Compute audio energy for UI waveform
-                        val rms = Math.sqrt(sumSquare / read).toFloat()
-                        onAudioLevel(rms)
+                    if (!isRecording) break
+
+                    if (read <= 0) {
+                        if (read < 0) {
+                            Log.w(TAG, "AudioRecord read returned error code: $read")
+                            try {
+                                Thread.sleep(10)
+                            } catch (_: InterruptedException) {
+                                break
+                            }
+                        }
+                        continue
+                    }
+
+                    // Keep buffering audio continuously from AudioRecord to prevent glitches
+                    // and buffer overflows, but skip VAD processing while paused.
+                    if (isPaused) {
+                        onAudioLevel(0f)
+                        continue
+                    }
+
+                    var sumSquare = 0.0
+                    for (i in 0 until read) {
+                        val sample = shortBuf[i] / 32768.0f
+                        floatBuf[i] = sample
+                        sumSquare += (sample * sample)
+                    }
+
+                    // Compute audio energy for UI waveform
+                    val rms = Math.sqrt(sumSquare / read).toFloat()
+                    onAudioLevel(rms)
+
+                    var speechStarted = false
+                    val speechUtterances = mutableListOf<FloatArray>()
+
+                    synchronized(vadLock) {
+                        if (isPaused) return@synchronized
 
                         vad?.let { detector ->
                             detector.acceptWaveform(floatBuf.copyOf(read))
@@ -124,7 +176,7 @@ class AudioCaptureManager(
                             if (detector.isSpeechDetected()) {
                                 if (!wasSpeechDetected) {
                                     wasSpeechDetected = true
-                                    onSpeechStart()
+                                    speechStarted = true
                                 }
                             }
 
@@ -136,10 +188,18 @@ class AudioCaptureManager(
                                 wasSpeechDetected = false
 
                                 if (speechSamples.isNotEmpty()) {
-                                    onSpeechUtterance(speechSamples)
+                                    speechUtterances.add(speechSamples)
                                 }
                             }
                         }
+                    }
+
+                    if (speechStarted) {
+                        onSpeechStart()
+                    }
+
+                    for (utterance in speechUtterances) {
+                        onSpeechUtterance(utterance)
                     }
                 }
             }
@@ -148,8 +208,37 @@ class AudioCaptureManager(
         }
     }
 
+    /**
+     * Pauses VAD processing while keeping AudioRecord active in the background.
+     * Prevents duplicate responses and buffer glitches during THINKING/SPEAKING states.
+     */
+    fun pauseListening() {
+        Log.d(TAG, "Pausing audio listening / VAD processing")
+        isPaused = true
+        synchronized(vadLock) {
+            vad?.reset()
+            wasSpeechDetected = false
+        }
+    }
+
+    /**
+     * Resumes VAD processing after THINKING/SPEAKING completes.
+     * Resets VAD state to ensure clean detection of new speech.
+     */
+    fun resumeListening() {
+        Log.d(TAG, "Resuming audio listening / VAD processing")
+        synchronized(vadLock) {
+            vad?.reset()
+            wasSpeechDetected = false
+            isPaused = false
+        }
+    }
+
     fun stopListening() {
         isRecording = false
+        isPaused = false
+        wasSpeechDetected = false
+
         try {
             audioRecord?.stop()
             audioRecord?.release()
@@ -157,11 +246,23 @@ class AudioCaptureManager(
             Log.e(TAG, "Error stopping AudioRecord", e)
         }
         audioRecord = null
+
+        try {
+            noiseSuppressor?.release()
+            echoCanceler?.release()
+        } catch (e: Exception) {
+            Log.e(TAG, "Error releasing audio effects", e)
+        }
+        noiseSuppressor = null
+        echoCanceler = null
+        recordingThread = null
     }
 
     fun release() {
         stopListening()
-        vad?.release()
-        vad = null
+        synchronized(vadLock) {
+            vad?.release()
+            vad = null
+        }
     }
 }
