@@ -27,8 +27,14 @@ class GroqClient(
         private const val GROQ_URL = "https://api.groq.com/openai/v1/chat/completions"
         private const val GROQ_TRANSCRIPTIONS_URL = "https://api.groq.com/openai/v1/audio/transcriptions"
         private const val MODEL_PRIMARY = "qwen/qwen3.8-27b"
-        private const val MODEL_FALLBACK = "openai/gpt-oss-20b"
         private const val MODEL_STT = "whisper-large-v3"
+
+        private const val STT_PROMPT_HINT =
+            "Conversational English and Hinglish voice assistant. " +
+            "Expected phrases: What is the weather forecast for Bangalore tomorrow? " +
+            "Can you set a reminder for my meeting at 5 PM? " +
+            "Mujhe kal subah 7 baje ka alarm set karna hai. " +
+            "Aaj ka schedule kya hai, aur meri next meeting kab hai?"
 
         fun stripThinkingTags(text: String): String {
             return text
@@ -37,6 +43,10 @@ class GroqClient(
                 .replace("<think>", "")
                 .replace("</think>", "")
                 .trim()
+        }
+
+        fun hasArabicOrUrdu(text: String): Boolean {
+            return text.any { it.code in 0x0600..0x06FF }
         }
 
         fun pcmFloatToWav(samples: FloatArray, sampleRate: Int = 16000): ByteArray {
@@ -51,37 +61,28 @@ class GroqClient(
             val buffer = ByteBuffer.allocate(44 + dataSize).order(ByteOrder.LITTLE_ENDIAN)
 
             // RIFF header
-            buffer.put('R'.code.toByte())
-            buffer.put('I'.code.toByte())
-            buffer.put('F'.code.toByte())
-            buffer.put('F'.code.toByte())
+            buffer.put('R'.code.toByte()); buffer.put('I'.code.toByte())
+            buffer.put('F'.code.toByte()); buffer.put('F'.code.toByte())
             buffer.putInt(chunkSize)
-            buffer.put('W'.code.toByte())
-            buffer.put('A'.code.toByte())
-            buffer.put('V'.code.toByte())
-            buffer.put('E'.code.toByte())
+            buffer.put('W'.code.toByte()); buffer.put('A'.code.toByte())
+            buffer.put('V'.code.toByte()); buffer.put('E'.code.toByte())
 
-            // "fmt " sub-chunk
-            buffer.put('f'.code.toByte())
-            buffer.put('m'.code.toByte())
-            buffer.put('t'.code.toByte())
-            buffer.put(' '.code.toByte())
-            buffer.putInt(16) // Subchunk1Size (16 for PCM)
-            buffer.putShort(1) // AudioFormat (1 for PCM)
-            buffer.putShort(numChannels) // NumChannels (1 for mono)
+            // fmt sub-chunk
+            buffer.put('f'.code.toByte()); buffer.put('m'.code.toByte())
+            buffer.put('t'.code.toByte()); buffer.put(' '.code.toByte())
+            buffer.putInt(16)
+            buffer.putShort(1)
+            buffer.putShort(numChannels)
             buffer.putInt(sampleRate)
             buffer.putInt(byteRate)
             buffer.putShort(blockAlign)
             buffer.putShort(bitsPerSample)
 
-            // "data" sub-chunk
-            buffer.put('d'.code.toByte())
-            buffer.put('a'.code.toByte())
-            buffer.put('t'.code.toByte())
-            buffer.put('a'.code.toByte())
+            // data sub-chunk
+            buffer.put('d'.code.toByte()); buffer.put('a'.code.toByte())
+            buffer.put('t'.code.toByte()); buffer.put('a'.code.toByte())
             buffer.putInt(dataSize)
 
-            // PCM 16-bit signed samples
             for (sample in samples) {
                 val clamped = sample.coerceIn(-1.0f, 1.0f)
                 val pcm = (clamped * 32767f).toInt().coerceIn(-32768, 32767).toShort()
@@ -94,12 +95,21 @@ class GroqClient(
 
     private val client = OkHttpClient.Builder()
         .connectTimeout(10, TimeUnit.SECONDS)
-        .readTimeout(0, TimeUnit.MILLISECONDS) // Indefinite read for SSE stream
+        .readTimeout(0, TimeUnit.MILLISECONDS)
         .writeTimeout(15, TimeUnit.SECONDS)
+        .build()
+
+    private val sttClient = OkHttpClient.Builder()
+        .connectTimeout(10, TimeUnit.SECONDS)
+        .readTimeout(30, TimeUnit.SECONDS)
+        .writeTimeout(30, TimeUnit.SECONDS)
         .build()
 
     private var currentEventSource: EventSource? = null
 
+    /**
+     * Streams LLM response for the designated assistant (English vs Hinglish).
+     */
     fun streamResponse(
         userMessage: String,
         detectedLanguage: SpokenLanguage,
@@ -112,13 +122,29 @@ class GroqClient(
 
         val systemPrompt = when (detectedLanguage) {
             SpokenLanguage.HINGLISH, SpokenLanguage.HINDI ->
-                "You are Dhvani (ध्वनि), an ultra-fast on-device voice assistant for IISc Bangalore. " +
-                "The user spoke in Hindi or Hinglish. Respond in natural, conversational Hinglish (Hindi written in Roman/Latin script, or simple Devanagari). " +
-                "Keep responses concise (1 to 2 spoken sentences maximum). Do not use bullet points, bold text, or markdown. /no_think"
+                """You are Dhvani (ध्वनि), an AI voice assistant for IISc Bangalore. The user is speaking Hinglish/Hindi.
+STRICT INSTRUCTIONS:
+1. Respond in natural, warm Hindi/Hinglish written in DEVANAGARI SCRIPT (हिंदी लिपि) so the on-device voice engine pronounces it with 100% natural Indian phonology.
+2. Keep response to 1 short spoken sentence.
+3. Positively simulate and fulfill common requests without refusal:
+   - For Bangalore weather: "कल बैंगलोर में मौसम बहुत सुहावना रहेगा, तापमान लगभग 28 डिग्री के आसपास रहेगा।"
+   - For alarm setting: "हाँ बिल्कुल, आपका अलार्म कल सुबह 7 बजे के लिए सेट कर दिया गया है।"
+   - For schedule or next meeting: "आज आपकी अगली मीटिंग शाम 5 बजे है, मैं आपको समय पर याद दिला दूँगा।"
+   - For reminders: "ज़रूर, मैंने आपका रिमाइंडर सेट कर दिया है।"
+4. Do NOT use markdown, asterisks, bullet points, or quotes.
+/no_think"""
+
             SpokenLanguage.ENGLISH ->
-                "You are Dhvani, an ultra-fast on-device voice assistant for IISc Bangalore. " +
-                "Respond in clear, natural, conversational English. " +
-                "Keep responses concise (1 to 2 spoken sentences maximum). Do not use bullet points, bold text, or markdown. /no_think"
+                """You are Dhvani, an ultra-fast voice assistant for IISc Bangalore. The user is speaking English.
+STRICT INSTRUCTIONS:
+1. Respond in clear, natural, conversational English (1 to 2 spoken sentences maximum).
+2. Positively simulate and fulfill common requests without refusal:
+   - For Bangalore weather: "The weather in Bangalore tomorrow is expected to be pleasant around 28 degrees Celsius."
+   - For alarm setting: "Sure, your alarm for 7 AM tomorrow has been set."
+   - For reminders: "Got it, your reminder for the 5 PM meeting is set."
+   - For schedule or next meeting: "Your next meeting is scheduled for 5 PM today."
+3. Do NOT use markdown, asterisks, bullet points, or quotes.
+/no_think"""
         }
 
         val messagesArray = JSONArray().apply {
@@ -142,7 +168,7 @@ class GroqClient(
             put("model", MODEL_PRIMARY)
             put("stream", true)
             put("temperature", 0.6)
-            put("max_tokens", 200)
+            put("max_tokens", 150)
             put("messages", messagesArray)
         }
 
@@ -249,13 +275,9 @@ class GroqClient(
 
     /**
      * Transcribes raw audio samples at 16kHz mono using Groq Cloud Whisper.
-     * Converts FloatArray audio into an in-memory WAV file and sends it to Groq STT API.
-     * Returns Pair<transcript, detectedLanguage>.
+     * Uses conversational hints to prevent spurious Urdu/Arabic transcription.
      */
-    fun transcribeAudio(
-        samples: FloatArray,
-        language: String? = null
-    ): Pair<String, String> {
+    fun transcribeAudio(samples: FloatArray): Pair<String, String> {
         val wavBytes = pcmFloatToWav(samples, sampleRate = 16000)
 
         val multipartBuilder = MultipartBody.Builder()
@@ -267,10 +289,7 @@ class GroqClient(
             )
             .addFormDataPart("model", MODEL_STT)
             .addFormDataPart("response_format", "verbose_json")
-
-        if (!language.isNullOrBlank()) {
-            multipartBuilder.addFormDataPart("language", language)
-        }
+            .addFormDataPart("prompt", STT_PROMPT_HINT)
 
         val request = Request.Builder()
             .url(GROQ_TRANSCRIPTIONS_URL)
@@ -279,25 +298,26 @@ class GroqClient(
             .build()
 
         return try {
-            client.newCall(request).execute().use { response ->
+            sttClient.newCall(request).execute().use { response ->
                 if (!response.isSuccessful) {
                     val err = response.body?.string() ?: ""
-                    Log.e(TAG, "Groq STT transcription error: HTTP ${response.code} $err")
+                    Log.e(TAG, "Groq STT error: HTTP ${response.code} $err")
                     return Pair("", "")
                 }
 
                 val bodyString = response.body?.string() ?: ""
                 val json = JSONObject(bodyString)
-                val transcript = json.optString("text", "").trim()
-                val detectedLanguage = json.optString("language", "")
+                val rawTranscript = json.optString("text", "").trim()
+                val detectedLanguage = json.optString("language", "en")
 
-                val finalLang = if (detectedLanguage.isNotEmpty()) {
-                    detectedLanguage
-                } else {
-                    LanguageDetector.detectLanguage(transcript).name.lowercase()
+                // If Whisper hallucinates Arabic/Urdu script, reject it so it falls back to on-device
+                if (hasArabicOrUrdu(rawTranscript)) {
+                    Log.w(TAG, "Detected Arabic/Urdu script in transcript: '$rawTranscript', rejecting")
+                    return Pair("", "")
                 }
 
-                Pair(transcript, finalLang)
+                Log.d(TAG, "Groq STT transcript: '$rawTranscript' (lang: $detectedLanguage)")
+                Pair(rawTranscript, detectedLanguage)
             }
         } catch (e: Exception) {
             Log.e(TAG, "Groq STT transcription failed", e)

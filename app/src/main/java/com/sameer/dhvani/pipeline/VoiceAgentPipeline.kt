@@ -15,6 +15,7 @@ import com.sameer.dhvani.utils.SpokenLanguage
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -27,9 +28,16 @@ enum class AgentState {
     SPEAKING
 }
 
+enum class AssistantMode {
+    AUTO,      // Automatically detects whether you speak English or Hinglish
+    ENGLISH,   // Force English Assistant (Amy voice)
+    HINGLISH   // Force Hinglish Assistant (Rohan voice)
+}
+
 data class ChatMessage(
     val id: String = java.util.UUID.randomUUID().toString(),
     val sender: MessageSender,
+    val senderName: String = "",
     val text: String,
     val language: SpokenLanguage? = null,
     val latency: LatencyMetrics? = null
@@ -46,10 +54,14 @@ class VoiceAgentPipeline(
 ) {
     companion object {
         private const val TAG = "VoiceAgentPipeline"
+        private const val ECHO_COOLDOWN_MS = 350L
     }
 
     private val _agentState = MutableStateFlow(AgentState.IDLE)
     val agentState: StateFlow<AgentState> = _agentState.asStateFlow()
+
+    private val _assistantMode = MutableStateFlow(AssistantMode.AUTO)
+    val assistantMode: StateFlow<AssistantMode> = _assistantMode.asStateFlow()
 
     private val _messages = MutableStateFlow<List<ChatMessage>>(emptyList())
     val messages: StateFlow<List<ChatMessage>> = _messages.asStateFlow()
@@ -66,19 +78,45 @@ class VoiceAgentPipeline(
 
     // Subsystems
     private val audioCapture: AudioCaptureManager
-    private val audioPlayback = AudioPlaybackManager()
+    private val audioPlayback: AudioPlaybackManager
     private val whisperRecognizer = WhisperRecognizer(context)
     private val piperSynthesizer = PiperSynthesizer(context)
     private val groqClient = GroqClient()
     private val latencyTracker = LatencyTracker()
 
     init {
+        audioPlayback = AudioPlaybackManager(
+            onPlaybackStarted = {
+                Log.d(TAG, "AudioPlayback started: ensuring VAD is paused")
+                audioCapture.pauseListening()
+                _agentState.value = AgentState.SPEAKING
+            },
+            onPlaybackFinished = {
+                Log.d(TAG, "AudioPlayback finished: starting echo cooldown")
+                coroutineScope.launch(Dispatchers.Main) {
+                    // Critical: wait for acoustic reverberations in the room to fade
+                    delay(ECHO_COOLDOWN_MS)
+                    if (!audioPlayback.isActivelyPlaying && _agentState.value == AgentState.SPEAKING) {
+                        Log.d(TAG, "Echo cooldown complete: resuming listening")
+                        _agentState.value = AgentState.IDLE
+                        isProcessing = false
+                        audioCapture.resumeListening()
+                    }
+                }
+            }
+        )
+
         audioCapture = AudioCaptureManager(
             context = context,
             onSpeechStart = { handleSpeechStart() },
             onSpeechUtterance = { samples -> handleSpeechUtterance(samples) },
             onAudioLevel = { level -> _audioLevel.value = level }
         )
+    }
+
+    fun setAssistantMode(mode: AssistantMode) {
+        _assistantMode.value = mode
+        Log.d(TAG, "Assistant mode switched to: $mode")
     }
 
     fun start() {
@@ -98,19 +136,40 @@ class VoiceAgentPipeline(
     }
 
     /**
+     * Tapping the center orb can trigger barge-in or manual listen toggle.
+     */
+    fun onOrbTapped() {
+        if (_agentState.value == AgentState.SPEAKING || audioPlayback.isActivelyPlaying) {
+            // Barge-in interruption
+            Log.d(TAG, "User tapped Orb during speech: executing barge-in")
+            bargeIn()
+        } else if (_agentState.value == AgentState.IDLE) {
+            Log.d(TAG, "User tapped Orb while IDLE: listening for speech")
+            audioCapture.resumeListening()
+            _agentState.value = AgentState.LISTENING
+        }
+    }
+
+    private fun bargeIn() {
+        activePipelineJob?.cancel()
+        activePipelineJob = null
+        audioPlayback.bargeIn()
+        groqClient.cancel()
+        isProcessing = false
+        coroutineScope.launch(Dispatchers.Main) {
+            delay(100)
+            audioCapture.resumeListening()
+            _agentState.value = AgentState.LISTENING
+        }
+    }
+
+    /**
      * Called by VAD when user begins speaking.
-     * Implements Barge-in: immediately stops agent speech if talking.
      */
     private fun handleSpeechStart() {
-        if (_agentState.value == AgentState.SPEAKING) {
-            Log.d(TAG, "Barge-in detected! Stopping agent speech.")
-            audioPlayback.bargeIn()
-            groqClient.cancel()
-            activePipelineJob?.cancel()
-            activePipelineJob = null
-            isProcessing = false
-            audioCapture.resumeListening()  // Re-enable VAD for new speech
-            _agentState.value = AgentState.LISTENING
+        if (_agentState.value == AgentState.SPEAKING || audioPlayback.isActivelyPlaying) {
+            Log.d(TAG, "Speech detected during playback! Initiating barge-in")
+            bargeIn()
         } else if (!isProcessing) {
             _agentState.value = AgentState.LISTENING
         }
@@ -121,37 +180,40 @@ class VoiceAgentPipeline(
      */
     private fun handleSpeechUtterance(samples: FloatArray) {
         val currentState = _agentState.value
-        // 1. State guard & processing flag: ignore if already processing or not in a valid state
-        if (isProcessing || (currentState != AgentState.LISTENING && currentState != AgentState.IDLE)) {
-            Log.d(TAG, "Ignoring utterance: pipeline is busy (state=$currentState, isProcessing=$isProcessing)")
+        // Half-duplex guard: strictly ignore if currently processing or playing
+        if (isProcessing || currentState == AgentState.SPEAKING || audioPlayback.isActivelyPlaying) {
+            Log.d(TAG, "Ignoring utterance: pipeline busy (state=$currentState, isPlaying=${audioPlayback.isActivelyPlaying})")
             return
         }
 
         isProcessing = true
+        // Pause VAD immediately so microphone will not capture any speaker audio
+        audioCapture.pauseListening()
         _agentState.value = AgentState.THINKING
-        audioCapture.pauseListening()  // Stop VAD while processing
         latencyTracker.reset()
         latencyTracker.markSpeechEnd()
 
+        activePipelineJob?.cancel()
         activePipelineJob = coroutineScope.launch(Dispatchers.Default) {
             try {
-                // 2. Cloud STT (Groq Whisper Large V3) with on-device Whisper Tiny fallback
-                val (transcript, _) = try {
+                // 1. STT (Groq Whisper Large V3 with prompt hints, fallback to on-device Whisper Tiny)
+                val (rawTranscript, _) = try {
                     val cloudResult = groqClient.transcribeAudio(samples)
                     if (cloudResult.first.isNotBlank()) {
                         cloudResult
                     } else {
-                        Log.w(TAG, "Cloud STT returned blank, falling back to on-device Whisper Tiny")
+                        Log.w(TAG, "Cloud STT returned empty, using on-device Whisper Tiny")
                         whisperRecognizer.transcribe(samples)
                     }
                 } catch (e: Exception) {
-                    Log.w(TAG, "Cloud STT failed, falling back to on-device Whisper Tiny", e)
+                    Log.w(TAG, "Cloud STT exception, using on-device Whisper Tiny", e)
                     whisperRecognizer.transcribe(samples)
                 }
 
+                val transcript = rawTranscript.trim()
                 if (transcript.isBlank()) {
-                    Log.d(TAG, "Transcript is blank, returning to IDLE")
-                    coroutineScope.launch {
+                    Log.d(TAG, "Blank transcript, returning to IDLE")
+                    coroutineScope.launch(Dispatchers.Main) {
                         _agentState.value = AgentState.IDLE
                         isProcessing = false
                         audioCapture.resumeListening()
@@ -161,74 +223,35 @@ class VoiceAgentPipeline(
 
                 latencyTracker.markSttEnd()
 
-                // 3. Language Detection (English vs Hinglish vs Hindi)
-                val detectedLang = LanguageDetector.detectLanguage(transcript)
+                // 2. Language Determination based on AssistantMode
+                val targetLang = when (_assistantMode.value) {
+                    AssistantMode.ENGLISH -> SpokenLanguage.ENGLISH
+                    AssistantMode.HINGLISH -> SpokenLanguage.HINGLISH
+                    AssistantMode.AUTO -> LanguageDetector.detectLanguage(transcript)
+                }
 
-                // 4. Conversation History (last 5 messages before the current one)
-                val conversationHistory = _messages.value.takeLast(5).map { msg ->
-                    val role = when (msg.sender) {
-                        MessageSender.USER -> "user"
-                        MessageSender.AGENT -> "assistant"
-                    }
-                    Pair(role, msg.text)
+                val assistantName = when (targetLang) {
+                    SpokenLanguage.ENGLISH -> "Dhvani (English)"
+                    SpokenLanguage.HINGLISH, SpokenLanguage.HINDI -> "ध्वनि (Hinglish)"
                 }
 
                 // Add user message to UI
                 val userMsg = ChatMessage(
                     sender = MessageSender.USER,
+                    senderName = "You",
                     text = transcript,
-                    language = detectedLang
+                    language = targetLang
                 )
-                coroutineScope.launch {
+                coroutineScope.launch(Dispatchers.Main) {
                     _messages.value = _messages.value + userMsg
                 }
 
-                // 5. Cloud LLM with Streaming Sentence-Chunked TTS
-                val sentenceChunker = SentenceChunker { sentence ->
-                    synthesizeAndPlaySentence(sentence, detectedLang)
-                }
+                // Execute conversational response
+                processResponse(transcript, targetLang, assistantName)
 
-                groqClient.streamResponse(
-                    userMessage = transcript,
-                    detectedLanguage = detectedLang,
-                    conversationHistory = conversationHistory,
-                    onToken = { token ->
-                        // Mark LLM first token directly on the first token received
-                        latencyTracker.markLlmFirstToken()
-                        sentenceChunker.addToken(token)
-                    },
-                    onComplete = { fullResponse ->
-                        // Thread safety: state updates dispatched to coroutine context
-                        coroutineScope.launch {
-                            sentenceChunker.finish()
-                            val finalMetrics = latencyTracker.buildMetrics()
-                            _currentMetrics.value = finalMetrics
-
-                            val agentMsg = ChatMessage(
-                                sender = MessageSender.AGENT,
-                                text = fullResponse,
-                                language = detectedLang,
-                                latency = finalMetrics
-                            )
-                            _messages.value = _messages.value + agentMsg
-                            _agentState.value = AgentState.IDLE
-                            isProcessing = false
-                            audioCapture.resumeListening()  // Resume VAD for next utterance
-                        }
-                    },
-                    onError = { error ->
-                        Log.e(TAG, "LLM streaming error", error)
-                        // Thread safety: state updates dispatched to coroutine context
-                        coroutineScope.launch {
-                            _agentState.value = AgentState.IDLE
-                            isProcessing = false
-                            audioCapture.resumeListening()  // Resume VAD on error
-                        }
-                    }
-                )
             } catch (e: Exception) {
-                Log.e(TAG, "Pipeline processing error", e)
-                coroutineScope.launch {
+                Log.e(TAG, "Error in speech utterance processing", e)
+                coroutineScope.launch(Dispatchers.Main) {
                     _agentState.value = AgentState.IDLE
                     isProcessing = false
                     audioCapture.resumeListening()
@@ -237,16 +260,118 @@ class VoiceAgentPipeline(
         }
     }
 
+    /**
+     * Executes test phrase directly (for 1-tap chip testing during demo/evaluation).
+     */
+    fun testUtterance(phrase: String) {
+        if (isProcessing || audioPlayback.isActivelyPlaying) {
+            bargeIn()
+        }
+
+        isProcessing = true
+        audioCapture.pauseListening()
+        _agentState.value = AgentState.THINKING
+        latencyTracker.reset()
+        latencyTracker.markSpeechEnd()
+        latencyTracker.markSttEnd()
+
+        activePipelineJob?.cancel()
+        activePipelineJob = coroutineScope.launch(Dispatchers.Default) {
+            val targetLang = when (_assistantMode.value) {
+                AssistantMode.ENGLISH -> SpokenLanguage.ENGLISH
+                AssistantMode.HINGLISH -> SpokenLanguage.HINGLISH
+                AssistantMode.AUTO -> LanguageDetector.detectLanguage(phrase)
+            }
+
+            val assistantName = when (targetLang) {
+                SpokenLanguage.ENGLISH -> "Dhvani (English)"
+                SpokenLanguage.HINGLISH, SpokenLanguage.HINDI -> "ध्वनि (Hinglish)"
+            }
+
+            val userMsg = ChatMessage(
+                sender = MessageSender.USER,
+                senderName = "You",
+                text = phrase,
+                language = targetLang
+            )
+            coroutineScope.launch(Dispatchers.Main) {
+                _messages.value = _messages.value + userMsg
+            }
+
+            processResponse(phrase, targetLang, assistantName)
+        }
+    }
+
+    private fun processResponse(
+        userInput: String,
+        targetLang: SpokenLanguage,
+        assistantName: String
+    ) {
+        // Last 5 messages for multi-turn context
+        val conversationHistory = _messages.value.takeLast(5).map { msg ->
+            val role = when (msg.sender) {
+                MessageSender.USER -> "user"
+                MessageSender.AGENT -> "assistant"
+            }
+            Pair(role, msg.text)
+        }
+
+        audioPlayback.setExpectingMoreAudio(true)
+
+        val sentenceChunker = SentenceChunker { sentence ->
+            synthesizeAndPlaySentence(sentence, targetLang)
+        }
+
+        groqClient.streamResponse(
+            userMessage = userInput,
+            detectedLanguage = targetLang,
+            conversationHistory = conversationHistory,
+            onToken = { token ->
+                latencyTracker.markLlmFirstToken()
+                sentenceChunker.addToken(token)
+            },
+            onComplete = { fullResponse ->
+                coroutineScope.launch(Dispatchers.Main) {
+                    sentenceChunker.finish()
+                    audioPlayback.setExpectingMoreAudio(false)
+
+                    val finalMetrics = latencyTracker.buildMetrics()
+                    _currentMetrics.value = finalMetrics
+
+                    val agentMsg = ChatMessage(
+                        sender = MessageSender.AGENT,
+                        senderName = assistantName,
+                        text = fullResponse,
+                        language = targetLang,
+                        latency = finalMetrics
+                    )
+                    _messages.value = _messages.value + agentMsg
+                    // Note: audioCapture.resumeListening() will be triggered automatically
+                    // by audioPlayback.onPlaybackFinished AFTER audio finishes playing + cooldown.
+                }
+            },
+            onError = { error ->
+                Log.e(TAG, "Groq LLM streaming error", error)
+                coroutineScope.launch(Dispatchers.Main) {
+                    audioPlayback.setExpectingMoreAudio(false)
+                    _agentState.value = AgentState.IDLE
+                    isProcessing = false
+                    audioCapture.resumeListening()
+                }
+            }
+        )
+    }
+
     private fun synthesizeAndPlaySentence(sentence: String, language: SpokenLanguage) {
         latencyTracker.markTtsStart()
-        coroutineScope.launch {
+        coroutineScope.launch(Dispatchers.Main) {
             _agentState.value = AgentState.SPEAKING
         }
 
         val generatedAudio = piperSynthesizer.synthesize(sentence, language)
         if (generatedAudio != null) {
             latencyTracker.markTtsFirstAudio()
-            coroutineScope.launch {
+            coroutineScope.launch(Dispatchers.Main) {
                 _currentMetrics.value = latencyTracker.buildMetrics()
             }
             audioPlayback.playAudio(generatedAudio.samples, generatedAudio.sampleRate)

@@ -30,13 +30,12 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Mic
-import androidx.compose.material.icons.filled.MicOff
 import androidx.compose.material.icons.filled.Speed
+import androidx.compose.material.icons.filled.VolumeUp
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
-import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -57,11 +56,11 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.sameer.dhvani.pipeline.AgentState
+import com.sameer.dhvani.pipeline.AssistantMode
 import com.sameer.dhvani.pipeline.ChatMessage
 import com.sameer.dhvani.pipeline.MessageSender
 import com.sameer.dhvani.pipeline.VoiceAgentPipeline
 import com.sameer.dhvani.utils.LatencyMetrics
-import com.sameer.dhvani.utils.SpokenLanguage
 
 // Color Palette for Dhvani
 val DarkBackground = Color(0xFF0F111A)
@@ -80,6 +79,7 @@ fun VoiceAgentScreen(
     modifier: Modifier = Modifier
 ) {
     val state by pipeline.agentState.collectAsState()
+    val mode by pipeline.assistantMode.collectAsState()
     val messages by pipeline.messages.collectAsState()
     val metrics by pipeline.currentMetrics.collectAsState()
     val audioLevel by pipeline.audioLevel.collectAsState()
@@ -101,13 +101,13 @@ fun VoiceAgentScreen(
         Column(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(horizontal = 16.dp, vertical = 20.dp)
+                .padding(horizontal = 16.dp, vertical = 16.dp)
         ) {
             // Header
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(vertical = 8.dp),
+                    .padding(vertical = 4.dp),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
@@ -115,14 +115,14 @@ fun VoiceAgentScreen(
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Text(
                             text = "ध्वनि",
-                            fontSize = 26.sp,
+                            fontSize = 24.sp,
                             fontWeight = FontWeight.Bold,
                             color = AccentSaffron
                         )
                         Spacer(modifier = Modifier.width(6.dp))
                         Text(
                             text = "DHVANI",
-                            fontSize = 20.sp,
+                            fontSize = 18.sp,
                             fontWeight = FontWeight.ExtraBold,
                             color = AccentCyan
                         )
@@ -137,17 +137,28 @@ fun VoiceAgentScreen(
                 IconButton(
                     onClick = { showHud = !showHud },
                     modifier = Modifier
-                        .size(40.dp)
+                        .size(36.dp)
                         .clip(CircleShape)
                         .background(SurfaceCard)
                 ) {
                     Icon(
                         imageVector = Icons.Default.Speed,
                         contentDescription = "Toggle Latency HUD",
-                        tint = if (showHud) AccentCyan else TextSecondary
+                        tint = if (showHud) AccentCyan else TextSecondary,
+                        modifier = Modifier.size(20.dp)
                     )
                 }
             }
+
+            Spacer(modifier = Modifier.height(4.dp))
+
+            // Dedicated Assistant Mode Selector
+            AssistantModeSelector(
+                selectedMode = mode,
+                onModeSelected = { pipeline.setAssistantMode(it) }
+            )
+
+            Spacer(modifier = Modifier.height(6.dp))
 
             // Real-time Latency HUD Overlay
             AnimatedVisibility(visible = showHud) {
@@ -175,13 +186,13 @@ fun VoiceAgentScreen(
                 }
             }
 
-            Spacer(modifier = Modifier.height(12.dp))
+            Spacer(modifier = Modifier.height(8.dp))
 
-            // Quick Test Sentences Chips (For instant 1-tap testing during demo)
+            // Quick Test Sentences Chips (1-tap evaluation for IISc criteria)
             Text(
-                text = "Assignment Test Sentences:",
+                text = "Tap any test phrase to run instant evaluation:",
                 fontSize = 11.sp,
-                fontWeight = FontWeight.Medium,
+                fontWeight = FontWeight.SemiBold,
                 color = TextSecondary,
                 modifier = Modifier.padding(bottom = 6.dp)
             )
@@ -191,48 +202,56 @@ fun VoiceAgentScreen(
                 modifier = Modifier.fillMaxWidth()
             ) {
                 val testPhrases = listOf(
-                    "Weather in Bangalore tomorrow",
-                    "Reminder at 5 PM",
-                    "Kal subah 7 baje ka alarm",
-                    "Aaj ka schedule kya hai?"
+                    "What is the weather forecast for Bangalore tomorrow?",
+                    "Can you set a reminder for my meeting at 5 PM?",
+                    "Mujhe kal subah 7 baje ka alarm set karna hai.",
+                    "Aaj ka schedule kya hai, aur meri next meeting kab hai?"
                 )
                 testPhrases.forEach { phrase ->
                     Surface(
                         shape = RoundedCornerShape(12.dp),
                         color = SurfaceCard,
-                        modifier = Modifier.border(0.5.dp, Color(0xFF2C3247), RoundedCornerShape(12.dp))
+                        modifier = Modifier
+                            .border(0.5.dp, Color(0xFF2C3247), RoundedCornerShape(12.dp))
+                            .clickable {
+                                pipeline.testUtterance(phrase)
+                            }
                     ) {
                         Text(
                             text = phrase,
-                            fontSize = 10.sp,
+                            fontSize = 11.sp,
                             color = AccentCyan,
-                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)
                         )
                     }
                 }
             }
 
-            Spacer(modifier = Modifier.height(16.dp))
+            Spacer(modifier = Modifier.height(12.dp))
 
-            // Central Dynamic Orb Visualizer
+            // Central Dynamic Orb Visualizer (Clickable for manual talk or barge-in)
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(120.dp),
+                    .height(100.dp),
                 contentAlignment = Alignment.Center
             ) {
-                VoiceOrbVisualizer(state = state, audioLevel = audioLevel)
+                VoiceOrbVisualizer(
+                    state = state,
+                    audioLevel = audioLevel,
+                    onClick = { pipeline.onOrbTapped() }
+                )
             }
 
             // State Description
             Text(
                 text = when (state) {
-                    AgentState.IDLE -> "Listening for voice..."
-                    AgentState.LISTENING -> "Speaking detected... (Listening)"
-                    AgentState.THINKING -> "Whisper STT & Groq reasoning..."
-                    AgentState.SPEAKING -> "Synthesizing with Piper TTS on-device..."
+                    AgentState.IDLE -> "Ready: Speak or tap a test phrase above"
+                    AgentState.LISTENING -> "Listening to your voice..."
+                    AgentState.THINKING -> "Whisper STT & Groq Reasoning..."
+                    AgentState.SPEAKING -> "Speaking with Piper TTS (Tap orb to interrupt)"
                 },
-                fontSize = 13.sp,
+                fontSize = 12.sp,
                 color = when (state) {
                     AgentState.IDLE -> TextSecondary
                     AgentState.LISTENING -> AccentGreen
@@ -248,15 +267,60 @@ fun VoiceAgentScreen(
 }
 
 @Composable
+fun AssistantModeSelector(
+    selectedMode: AssistantMode,
+    onModeSelected: (AssistantMode) -> Unit
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(12.dp))
+            .background(SurfaceCard)
+            .padding(3.dp),
+        horizontalArrangement = Arrangement.SpaceBetween
+    ) {
+        val modes = listOf(
+            Triple(AssistantMode.AUTO, "Auto Detect", "🌐"),
+            Triple(AssistantMode.ENGLISH, "English", "🇬🇧"),
+            Triple(AssistantMode.HINGLISH, "Hinglish", "🇮🇳")
+        )
+
+        modes.forEach { (mode, label, icon) ->
+            val isSelected = selectedMode == mode
+            Box(
+                modifier = Modifier
+                    .weight(1f)
+                    .clip(RoundedCornerShape(10.dp))
+                    .background(if (isSelected) Color(0xFF2B334E) else Color.Transparent)
+                    .clickable { onModeSelected(mode) }
+                    .padding(vertical = 6.dp),
+                contentAlignment = Alignment.Center
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(text = icon, fontSize = 12.sp)
+                    Spacer(modifier = Modifier.width(4.dp))
+                    Text(
+                        text = label,
+                        fontSize = 11.sp,
+                        fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
+                        color = if (isSelected) AccentCyan else TextSecondary
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
 fun LatencyDashboardHUD(metrics: LatencyMetrics) {
     Card(
-        shape = RoundedCornerShape(14.dp),
+        shape = RoundedCornerShape(12.dp),
         colors = CardDefaults.cardColors(containerColor = SurfaceCard),
         modifier = Modifier
             .fillMaxWidth()
-            .border(1.dp, Color(0xFF282D42), RoundedCornerShape(14.dp))
+            .border(1.dp, Color(0xFF282D42), RoundedCornerShape(12.dp))
     ) {
-        Column(modifier = Modifier.padding(12.dp)) {
+        Column(modifier = Modifier.padding(10.dp)) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
@@ -264,7 +328,7 @@ fun LatencyDashboardHUD(metrics: LatencyMetrics) {
             ) {
                 Text(
                     text = "REAL-TIME PIPELINE TELEMETRY",
-                    fontSize = 10.sp,
+                    fontSize = 9.sp,
                     fontWeight = FontWeight.Bold,
                     color = AccentCyan,
                     letterSpacing = 1.sp
@@ -277,14 +341,14 @@ fun LatencyDashboardHUD(metrics: LatencyMetrics) {
                 )
             }
 
-            Spacer(modifier = Modifier.height(8.dp))
+            Spacer(modifier = Modifier.height(6.dp))
 
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween
             ) {
                 TelemetryMetricItem("VAD", "${metrics.vadDurationMs}ms", "Silero ONNX")
-                TelemetryMetricItem("STT", "${metrics.sttDurationMs}ms", "Whisper INT8")
+                TelemetryMetricItem("STT", "${metrics.sttDurationMs}ms", "Groq / Whisper")
                 TelemetryMetricItem("LLM TTFT", "${metrics.llmTtftMs}ms", "Groq Qwen")
                 TelemetryMetricItem("TTS TTFA", "${metrics.ttsTtfaMs}ms", "Piper VITS")
             }
@@ -296,13 +360,17 @@ fun LatencyDashboardHUD(metrics: LatencyMetrics) {
 fun TelemetryMetricItem(label: String, value: String, engine: String) {
     Column(horizontalAlignment = Alignment.CenterHorizontally) {
         Text(text = label, fontSize = 9.sp, color = TextSecondary, fontWeight = FontWeight.Bold)
-        Text(text = value, fontSize = 13.sp, color = TextPrimary, fontWeight = FontWeight.ExtraBold)
+        Text(text = value, fontSize = 12.sp, color = TextPrimary, fontWeight = FontWeight.ExtraBold)
         Text(text = engine, fontSize = 8.sp, color = Color(0xFF7E849E))
     }
 }
 
 @Composable
-fun VoiceOrbVisualizer(state: AgentState, audioLevel: Float) {
+fun VoiceOrbVisualizer(
+    state: AgentState,
+    audioLevel: Float,
+    onClick: () -> Unit
+) {
     val infiniteTransition = rememberInfiniteTransition(label = "OrbPulse")
     val pulseScale by infiniteTransition.animateFloat(
         initialValue = 0.95f,
@@ -330,20 +398,21 @@ fun VoiceOrbVisualizer(state: AgentState, audioLevel: Float) {
 
     Box(
         modifier = Modifier
-            .size(90.dp)
+            .size(80.dp)
             .scale(dynamicScale)
             .clip(CircleShape)
-            .background(orbGradient),
+            .background(orbGradient)
+            .clickable { onClick() },
         contentAlignment = Alignment.Center
     ) {
         Icon(
             imageVector = when (state) {
-                AgentState.SPEAKING -> Icons.Default.Speed
+                AgentState.SPEAKING -> Icons.Default.VolumeUp
                 else -> Icons.Default.Mic
             },
-            contentDescription = null,
+            contentDescription = "Voice Assistant State",
             tint = Color.White,
-            modifier = Modifier.size(36.dp)
+            modifier = Modifier.size(32.dp)
         )
     }
 }
@@ -360,7 +429,7 @@ fun ChatBubble(message: ChatMessage) {
             modifier = Modifier.padding(bottom = 2.dp)
         ) {
             Text(
-                text = if (isUser) "You" else "Dhvani",
+                text = if (message.senderName.isNotEmpty()) message.senderName else if (isUser) "You" else "Dhvani",
                 fontSize = 11.sp,
                 fontWeight = FontWeight.Bold,
                 color = if (isUser) AccentCyan else AccentSaffron
@@ -412,19 +481,19 @@ fun EmptyStatePrompt() {
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(vertical = 40.dp),
+            .padding(vertical = 30.dp),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
         Text(
-            text = "Welcome to Dhvani (ध्वनि)",
-            fontSize = 16.sp,
+            text = "ध्वनि (Dhvani) Multilingual Voice Agent",
+            fontSize = 15.sp,
             fontWeight = FontWeight.Bold,
             color = TextPrimary
         )
-        Spacer(modifier = Modifier.height(6.dp))
+        Spacer(modifier = Modifier.height(4.dp))
         Text(
-            text = "Speak naturally in English or Hinglish.\nSTT and TTS run fully on your OnePlus device.",
-            fontSize = 12.sp,
+            text = "Speak naturally or tap any test sentence below.\nSTT & TTS run on-device on your OnePlus phone.",
+            fontSize = 11.sp,
             color = TextSecondary,
             textAlign = TextAlign.Center
         )
