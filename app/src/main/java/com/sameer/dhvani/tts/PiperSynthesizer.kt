@@ -127,7 +127,9 @@ class PiperSynthesizer(private val context: Context) {
          * Transliterates full Hinglish text to Devanagari, preserving punctuation and spacing.
          */
         fun transliterateToDevanagari(text: String): String {
-            return text.split(Regex("(\\s+)")).joinToString("") { token ->
+            // Split into words keeping spaces as separators
+            val words = text.split(" ")
+            return words.joinToString(" ") { token ->
                 if (token.isBlank()) {
                     token // preserve whitespace
                 } else {
