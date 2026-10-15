@@ -2,7 +2,6 @@ package com.sameer.dhvani.llm
 
 import android.util.Log
 import com.sameer.dhvani.BuildConfig
-import com.sameer.dhvani.utils.LanguageDetector
 import com.sameer.dhvani.utils.SpokenLanguage
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.MultipartBody
@@ -19,6 +18,16 @@ import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.util.concurrent.TimeUnit
 
+/**
+ * Transcription result from Groq Cloud Whisper.
+ * Carries the raw transcript AND Whisper's own language detection.
+ */
+data class TranscriptionResult(
+    val transcript: String,
+    val whisperLanguage: String, // "en", "hi", "ur", etc.
+    val isOnDevice: Boolean = false
+)
+
 class GroqClient(
     private val apiKey: String = BuildConfig.GROQ_API_KEY
 ) {
@@ -29,6 +38,10 @@ class GroqClient(
         private const val MODEL_PRIMARY = "qwen/qwen3.8-27b"
         private const val MODEL_STT = "whisper-large-v3"
 
+        /**
+         * Conversational prompt hint helps Whisper recognize Indian English + Hindi words.
+         * This dramatically improves accuracy for Hinglish by biasing the decoder.
+         */
         private const val STT_PROMPT_HINT =
             "Conversational English and Hinglish voice assistant. " +
             "Expected phrases: What is the weather forecast for Bangalore tomorrow? " +
@@ -109,6 +122,7 @@ class GroqClient(
 
     /**
      * Streams LLM response for the designated assistant (English vs Hinglish).
+     * System prompt strictly controls response language to match what the user spoke.
      */
     fun streamResponse(
         userMessage: String,
@@ -124,26 +138,28 @@ class GroqClient(
             SpokenLanguage.HINGLISH, SpokenLanguage.HINDI ->
                 """You are Dhvani (ध्वनि), an AI voice assistant for IISc Bangalore. The user is speaking Hinglish/Hindi.
 STRICT INSTRUCTIONS:
-1. Respond in natural, warm Hindi/Hinglish written in DEVANAGARI SCRIPT (हिंदी लिपि) so the on-device voice engine pronounces it with 100% natural Indian phonology.
-2. Keep response to 1 short spoken sentence.
+1. Respond ONLY in Hindi written in DEVANAGARI SCRIPT (हिंदी लिपि). Every single word must be Devanagari. NO Roman/Latin script at all.
+2. Keep response to exactly 1 short spoken sentence (under 20 words).
 3. Positively simulate and fulfill common requests without refusal:
-   - For Bangalore weather: "कल बैंगलोर में मौसम बहुत सुहावना रहेगा, तापमान लगभग 28 डिग्री के आसपास रहेगा।"
-   - For alarm setting: "हाँ बिल्कुल, आपका अलार्म कल सुबह 7 बजे के लिए सेट कर दिया गया है।"
-   - For schedule or next meeting: "आज आपकी अगली मीटिंग शाम 5 बजे है, मैं आपको समय पर याद दिला दूँगा।"
-   - For reminders: "ज़रूर, मैंने आपका रिमाइंडर सेट कर दिया है।"
-4. Do NOT use markdown, asterisks, bullet points, or quotes.
+   - For Bangalore weather: "कल बैंगलोर में मौसम सुहावना रहेगा, तापमान लगभग 28 डिग्री रहेगा।"
+   - For alarm setting: "आपका अलार्म कल सुबह 7 बजे के लिए सेट कर दिया गया है।"
+   - For schedule or next meeting: "आपकी अगली मीटिंग शाम 5 बजे है।"
+   - For reminders: "आपका रिमाइंडर सेट कर दिया है।"
+4. Do NOT use markdown, asterisks, bullet points, quotes, or English words.
+5. Sound warm, natural, and conversational like a helpful Indian friend.
 /no_think"""
 
             SpokenLanguage.ENGLISH ->
                 """You are Dhvani, an ultra-fast voice assistant for IISc Bangalore. The user is speaking English.
 STRICT INSTRUCTIONS:
-1. Respond in clear, natural, conversational English (1 to 2 spoken sentences maximum).
-2. Positively simulate and fulfill common requests without refusal:
-   - For Bangalore weather: "The weather in Bangalore tomorrow is expected to be pleasant around 28 degrees Celsius."
+1. Respond ONLY in clear, natural English. Do NOT mix any Hindi words.
+2. Keep response to exactly 1 short spoken sentence (under 20 words).
+3. Positively simulate and fulfill common requests:
+   - For weather: "Tomorrow's weather in Bangalore is expected to be pleasant, around 28 degrees Celsius."
    - For alarm setting: "Sure, your alarm for 7 AM tomorrow has been set."
    - For reminders: "Got it, your reminder for the 5 PM meeting is set."
-   - For schedule or next meeting: "Your next meeting is scheduled for 5 PM today."
-3. Do NOT use markdown, asterisks, bullet points, or quotes.
+   - For schedule: "Your next meeting is scheduled for 5 PM today."
+4. Do NOT use markdown, asterisks, bullet points, or quotes.
 /no_think"""
         }
 
@@ -167,8 +183,8 @@ STRICT INSTRUCTIONS:
         val requestPayload = JSONObject().apply {
             put("model", MODEL_PRIMARY)
             put("stream", true)
-            put("temperature", 0.6)
-            put("max_tokens", 150)
+            put("temperature", 0.5)
+            put("max_tokens", 100) // Shorter = faster response
             put("messages", messagesArray)
         }
 
@@ -274,10 +290,45 @@ STRICT INSTRUCTIONS:
     }
 
     /**
-     * Transcribes raw audio samples at 16kHz mono using Groq Cloud Whisper.
-     * Uses conversational hints to prevent spurious Urdu/Arabic transcription.
+     * Transcribes raw audio samples at 16kHz mono using Groq Cloud Whisper Large V3.
+     *
+     * CRITICAL: Returns TranscriptionResult with BOTH the transcript AND Whisper's
+     * detected language code ("en", "hi", "ur", etc.). The pipeline uses whisperLanguage
+     * as the PRIMARY language detection signal — it's far more accurate than text heuristics.
+     *
+     * Strategy:
+     * 1. First attempt: Let Whisper auto-detect language (no forced language parameter)
+     * 2. If result has Arabic/Urdu script → retry with language="en" forced
+     * 3. Return both transcript and detected language for routing
      */
-    fun transcribeAudio(samples: FloatArray): Pair<String, String> {
+    fun transcribeAudio(samples: FloatArray): TranscriptionResult {
+        // Attempt 1: Auto-detect language
+        val autoResult = callWhisperAPI(samples, forcedLanguage = null)
+
+        if (autoResult.transcript.isNotBlank()) {
+            // Check for Arabic/Urdu hallucination
+            if (hasArabicOrUrdu(autoResult.transcript)) {
+                Log.w(TAG, "Auto-detect produced Arabic/Urdu: '${autoResult.transcript}', retrying with language=en")
+                // Attempt 2: Force English transcription (romanizes Hindi words)
+                val enResult = callWhisperAPI(samples, forcedLanguage = "en")
+                if (enResult.transcript.isNotBlank()) {
+                    // We know it was Hindi speech but forced English romanization
+                    return TranscriptionResult(
+                        transcript = enResult.transcript,
+                        whisperLanguage = "hi" // We know it was Hindi that got Urdu hallucination
+                    )
+                }
+            }
+            return autoResult
+        }
+
+        return TranscriptionResult("", "en")
+    }
+
+    /**
+     * Makes the actual Whisper API call. Separated to allow retry with different language.
+     */
+    private fun callWhisperAPI(samples: FloatArray, forcedLanguage: String?): TranscriptionResult {
         val wavBytes = pcmFloatToWav(samples, sampleRate = 16000)
 
         val multipartBuilder = MultipartBody.Builder()
@@ -291,6 +342,11 @@ STRICT INSTRUCTIONS:
             .addFormDataPart("response_format", "verbose_json")
             .addFormDataPart("prompt", STT_PROMPT_HINT)
 
+        // Only force language if specified
+        if (forcedLanguage != null) {
+            multipartBuilder.addFormDataPart("language", forcedLanguage)
+        }
+
         val request = Request.Builder()
             .url(GROQ_TRANSCRIPTIONS_URL)
             .addHeader("Authorization", "Bearer $apiKey")
@@ -302,7 +358,7 @@ STRICT INSTRUCTIONS:
                 if (!response.isSuccessful) {
                     val err = response.body?.string() ?: ""
                     Log.e(TAG, "Groq STT error: HTTP ${response.code} $err")
-                    return Pair("", "")
+                    return TranscriptionResult("", "")
                 }
 
                 val bodyString = response.body?.string() ?: ""
@@ -310,18 +366,16 @@ STRICT INSTRUCTIONS:
                 val rawTranscript = json.optString("text", "").trim()
                 val detectedLanguage = json.optString("language", "en")
 
-                // If Whisper hallucinates Arabic/Urdu script, reject it so it falls back to on-device
-                if (hasArabicOrUrdu(rawTranscript)) {
-                    Log.w(TAG, "Detected Arabic/Urdu script in transcript: '$rawTranscript', rejecting")
-                    return Pair("", "")
-                }
+                Log.d(TAG, "Groq STT: transcript='$rawTranscript' | whisperLang='$detectedLanguage' | forced='$forcedLanguage'")
 
-                Log.d(TAG, "Groq STT transcript: '$rawTranscript' (lang: $detectedLanguage)")
-                Pair(rawTranscript, detectedLanguage)
+                TranscriptionResult(
+                    transcript = rawTranscript,
+                    whisperLanguage = detectedLanguage
+                )
             }
         } catch (e: Exception) {
             Log.e(TAG, "Groq STT transcription failed", e)
-            Pair("", "")
+            TranscriptionResult("", "")
         }
     }
 

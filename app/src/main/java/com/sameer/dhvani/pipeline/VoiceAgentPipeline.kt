@@ -177,6 +177,7 @@ class VoiceAgentPipeline(
 
     /**
      * Called by VAD when silence is detected after user speech.
+     * Uses Groq Cloud Whisper Large V3 for STT with language detection.
      */
     private fun handleSpeechUtterance(samples: FloatArray) {
         val currentState = _agentState.value
@@ -196,21 +197,23 @@ class VoiceAgentPipeline(
         activePipelineJob?.cancel()
         activePipelineJob = coroutineScope.launch(Dispatchers.Default) {
             try {
-                // 1. STT (Groq Whisper Large V3 with prompt hints, fallback to on-device Whisper Tiny)
-                val (rawTranscript, _) = try {
+                // 1. STT: Groq Cloud Whisper Large V3 (primary) → On-device Whisper Tiny (fallback)
+                val sttResult = try {
                     val cloudResult = groqClient.transcribeAudio(samples)
-                    if (cloudResult.first.isNotBlank()) {
+                    if (cloudResult.transcript.isNotBlank()) {
                         cloudResult
                     } else {
                         Log.w(TAG, "Cloud STT returned empty, using on-device Whisper Tiny")
-                        whisperRecognizer.transcribe(samples)
+                        val (text, lang) = whisperRecognizer.transcribe(samples)
+                        com.sameer.dhvani.llm.TranscriptionResult(text, lang, isOnDevice = true)
                     }
                 } catch (e: Exception) {
                     Log.w(TAG, "Cloud STT exception, using on-device Whisper Tiny", e)
-                    whisperRecognizer.transcribe(samples)
+                    val (text, lang) = whisperRecognizer.transcribe(samples)
+                    com.sameer.dhvani.llm.TranscriptionResult(text, lang, isOnDevice = true)
                 }
 
-                val transcript = rawTranscript.trim()
+                val transcript = sttResult.transcript.trim()
                 if (transcript.isBlank()) {
                     Log.d(TAG, "Blank transcript, returning to IDLE")
                     coroutineScope.launch(Dispatchers.Main) {
@@ -223,12 +226,17 @@ class VoiceAgentPipeline(
 
                 latencyTracker.markSttEnd()
 
-                // 2. Language Determination based on AssistantMode
+                // 2. Language Detection: Use Whisper's detected language as PRIMARY signal
                 val targetLang = when (_assistantMode.value) {
                     AssistantMode.ENGLISH -> SpokenLanguage.ENGLISH
                     AssistantMode.HINGLISH -> SpokenLanguage.HINGLISH
-                    AssistantMode.AUTO -> LanguageDetector.detectLanguage(transcript)
+                    AssistantMode.AUTO -> {
+                        // Combine Whisper's audio-level language detection with text heuristics
+                        LanguageDetector.detectFromWhisper(sttResult.whisperLanguage, transcript)
+                    }
                 }
+
+                Log.d(TAG, "Language routing: whisperLang='${sttResult.whisperLanguage}' | textLang='${LanguageDetector.detectLanguage(transcript)}' | targetLang=$targetLang | mode=${_assistantMode.value}")
 
                 val assistantName = when (targetLang) {
                     SpokenLanguage.ENGLISH -> "Dhvani (English)"
