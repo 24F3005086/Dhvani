@@ -12,6 +12,7 @@ import com.k2fsa.sherpa.onnx.OfflineTtsModelConfig
 import com.k2fsa.sherpa.onnx.OfflineTtsSupertonicModelConfig
 import com.k2fsa.sherpa.onnx.OfflineTtsVitsModelConfig
 import com.sameer.dhvani.llm.GroqClient
+import com.sameer.dhvani.utils.NumberNormalizer
 import com.sameer.dhvani.utils.SpokenLanguage
 import java.io.File
 import java.io.FileOutputStream
@@ -91,7 +92,8 @@ class PiperSynthesizer(private val context: Context) {
             val espeakDir = prepareEspeakData(context)
             Log.d(TAG, "Prepared espeak-ng-data at: $espeakDir")
 
-            // 1. Piper Edge: English Voice (en_US-amy-medium) — Offline VITS
+            // 1. English Voice (Amy medium) — Offline VITS
+            // lengthScale = 1.15f provides a clear, natural, deliberate conversational pace (no rushing)
             val englishVits = OfflineTtsVitsModelConfig(
                 model = "tts-english/en_US-amy-medium.onnx",
                 tokens = "tts-english/tokens.txt",
@@ -100,7 +102,7 @@ class PiperSynthesizer(private val context: Context) {
                 dictDir = "",
                 noiseScale = 0.33f,
                 noiseScaleW = 0.5f,
-                lengthScale = 1.0f
+                lengthScale = 1.15f
             )
             val englishModelConfig = OfflineTtsModelConfig(
                 vits = englishVits,
@@ -110,7 +112,7 @@ class PiperSynthesizer(private val context: Context) {
             )
             val englishConfig = OfflineTtsConfig(model = englishModelConfig)
             englishTts = OfflineTts(context.assets, englishConfig)
-            Log.d(TAG, "Piper Edge English TTS (Amy) initialized successfully")
+            Log.d(TAG, "English TTS initialized successfully (sampleRate=${englishTts?.sampleRate()})")
 
             // 2. Supertonic 3 Hindi (sherpa-onnx Flow-Matching Diffusion) — Primary Hindi Voice
             try {
@@ -131,12 +133,12 @@ class PiperSynthesizer(private val context: Context) {
                 )
                 val supertonicConfig = OfflineTtsConfig(model = supertonicOfflineConfig)
                 supertonicTts = OfflineTts(context.assets, supertonicConfig)
-                Log.d(TAG, "Supertonic 3 Hindi TTS initialized successfully")
+                Log.d(TAG, "Supertonic 3 Hindi TTS initialized successfully (sampleRate=${supertonicTts?.sampleRate()})")
             } catch (e: Exception) {
                 Log.e(TAG, "Error initializing Supertonic 3 Hindi TTS", e)
             }
 
-            // 3. Piper Hindi Voice (hi_IN-rohan-medium) — Fallback offline VITS
+            // 3. Piper Hindi Voice (Rohan medium) — Fallback offline VITS
             val hindiVits = OfflineTtsVitsModelConfig(
                 model = "tts-hindi/hi_IN-rohan-medium.onnx",
                 tokens = "tts-hindi/tokens.txt",
@@ -145,7 +147,7 @@ class PiperSynthesizer(private val context: Context) {
                 dictDir = "",
                 noiseScale = 0.33f,
                 noiseScaleW = 0.5f,
-                lengthScale = 1.1f
+                lengthScale = 1.15f
             )
             val hindiModelConfig = OfflineTtsModelConfig(
                 vits = hindiVits,
@@ -155,10 +157,10 @@ class PiperSynthesizer(private val context: Context) {
             )
             val hindiConfig = OfflineTtsConfig(model = hindiModelConfig)
             hindiTts = OfflineTts(context.assets, hindiConfig)
-            Log.d(TAG, "Piper Hindi TTS (Rohan) initialized as fallback")
+            Log.d(TAG, "Hindi fallback TTS initialized successfully")
 
         } catch (e: Exception) {
-            Log.e(TAG, "Error initializing Piper TTS models", e)
+            Log.e(TAG, "Error initializing TTS models", e)
         }
     }
 
@@ -168,8 +170,8 @@ class PiperSynthesizer(private val context: Context) {
                 androidTtsReady = true
                 val hindiLocale = Locale.forLanguageTag("hi-IN")
                 androidTts?.language = hindiLocale
-                androidTts?.setSpeechRate(1.02f)
-                androidTts?.setPitch(0.98f) // Natural deep male pitch
+                androidTts?.setSpeechRate(1.0f)
+                androidTts?.setPitch(0.98f) // Natural deep pitch
 
                 // Select Google Neural Male Voice: hi-in-x-hid-local
                 val voices = androidTts?.voices ?: emptySet()
@@ -223,8 +225,9 @@ class PiperSynthesizer(private val context: Context) {
 
     /**
      * Dedicated Dual-Voice Routing:
-     * - ENGLISH: Synthesized with Piper Edge (Sherpa-ONNX en_US-amy-medium).
-     * - HINGLISH / HINDI: Synthesized with On-Device Male Voice (Google Neural hi-in-x-hid-local).
+     * - ENGLISH: Synthesized with On-Device English Voice (Amy).
+     * - HINGLISH / HINDI: Synthesized with Supertonic 3 Hindi (or Google Neural Male).
+     *   Numbers like 5 and 7 are fully normalized to Devanagari words (पाँच, सात) so pronunciation is flawless.
      */
     fun synthesize(rawText: String, detectedLanguage: SpokenLanguage): GeneratedAudio? {
         val text = cleanTextForSpeech(rawText)
@@ -235,20 +238,22 @@ class PiperSynthesizer(private val context: Context) {
             val isHinglishOrHindi = detectedLanguage == SpokenLanguage.HINGLISH || detectedLanguage == SpokenLanguage.HINDI
 
             if (isDevanagari || isHinglishOrHindi) {
-                val textToSpeak = if (isDevanagari) text else fallbackRomanToDevanagari(text)
-                Log.d(TAG, "Speaking Hindi: '$textToSpeak'")
+                // 1. Text normalization: Convert Romanized Hinglish and expand all digits (5 -> पाँच, 7 -> सात, 5 PM -> शाम पाँच बजे)
+                val baseDevanagari = if (isDevanagari) text else fallbackRomanToDevanagari(text)
+                val normalizedHindi = NumberNormalizer.normalizeForHindi(baseDevanagari)
+                Log.d(TAG, "Speaking Hindi: original='$text' -> normalized='$normalizedHindi'")
 
-                // 1. Primary: Supertonic 3 Hindi via Sherpa-ONNX (Flow-Matching Diffusion)
+                // 2. Primary: Supertonic 3 Hindi via Sherpa-ONNX
                 val supertonicAudio = try {
                     if (supertonicTts != null) {
-                        Log.d(TAG, "Synthesizing with Supertonic 3 Hindi (sid=0, numSteps=5)...")
+                        Log.d(TAG, "Synthesizing with Supertonic 3 Hindi...")
                         val genConfig = GenerationConfig(
                             sid = 0,
                             numSteps = 5,
                             speed = 1.0f,
                             extra = mapOf("lang" to "hi")
                         )
-                        supertonicTts?.generateWithConfig(textToSpeak, genConfig)
+                        supertonicTts?.generateWithConfig(normalizedHindi, genConfig)
                     } else null
                 } catch (e: Exception) {
                     Log.w(TAG, "Supertonic 3 synthesis failed, using fallback", e)
@@ -260,24 +265,25 @@ class PiperSynthesizer(private val context: Context) {
                     return supertonicAudio
                 }
 
-                // 2. Fallback: Google Neural Male Voice
-                val maleAudio = if (androidTtsReady && hasDevanagari(textToSpeak)) {
-                    synthesizeWithMaleTts(textToSpeak)
+                // 3. Fallback: Google Neural Male Voice (handles Devanagari & numbers natively)
+                val maleAudio = if (androidTtsReady && hasDevanagari(normalizedHindi)) {
+                    synthesizeWithMaleTts(normalizedHindi)
                 } else null
 
-                // 3. Fallback: Piper Rohan VITS
+                // 4. Fallback: Piper Rohan VITS
                 maleAudio ?: run {
-                    Log.w(TAG, "Male Google TTS unavailable, falling back to Piper Rohan")
-                    hindiTts?.generate(textToSpeak, sid = 0, speed = 1.0f)
+                    Log.w(TAG, "Falling back to Piper Rohan")
+                    hindiTts?.generate(normalizedHindi, sid = 0, speed = 1.0f)
                 }
             } else {
-                // ENGLISH: Always synthesized with PIPER EDGE
-                Log.d(TAG, "Speaking English with Piper Edge: '$text'")
-                englishTts?.generate(text, sid = 0, speed = 1.0f)
-                    ?: hindiTts?.generate(text, sid = 0, speed = 1.0f)
+                // ENGLISH: Always synthesized with English Voice at natural conversational pace (1.0x)
+                val normalizedEnglish = NumberNormalizer.normalizeForEnglish(text)
+                Log.d(TAG, "Speaking English: '$normalizedEnglish'")
+                englishTts?.generate(normalizedEnglish, sid = 0, speed = 1.0f)
+                    ?: hindiTts?.generate(normalizedEnglish, sid = 0, speed = 1.0f)
             }
         } catch (e: Exception) {
-            Log.e(TAG, "Synthesis failed for text: '$text'", e)
+            Log.e(TAG, "Synthesis failed for text: '$rawText'", e)
             null
         }
     }

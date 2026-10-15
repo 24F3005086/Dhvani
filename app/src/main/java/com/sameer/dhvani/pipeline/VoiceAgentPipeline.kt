@@ -239,8 +239,8 @@ class VoiceAgentPipeline(
                 Log.d(TAG, "Language routing: whisperLang='${sttResult.whisperLanguage}' | textLang='${LanguageDetector.detectLanguage(transcript)}' | targetLang=$targetLang | mode=${_assistantMode.value}")
 
                 val assistantName = when (targetLang) {
-                    SpokenLanguage.ENGLISH -> "Dhvani (Piper Edge)"
-                    SpokenLanguage.HINGLISH, SpokenLanguage.HINDI -> "ध्वनि (Supertonic 3)"
+                    SpokenLanguage.ENGLISH -> "Dhvani"
+                    SpokenLanguage.HINGLISH, SpokenLanguage.HINDI -> "ध्वनि"
                 }
 
                 // Add user message to UI
@@ -292,8 +292,8 @@ class VoiceAgentPipeline(
             }
 
             val assistantName = when (targetLang) {
-                SpokenLanguage.ENGLISH -> "Dhvani (Piper Edge)"
-                SpokenLanguage.HINGLISH, SpokenLanguage.HINDI -> "ध्वनि (Supertonic 3)"
+                SpokenLanguage.ENGLISH -> "Dhvani"
+                SpokenLanguage.HINGLISH, SpokenLanguage.HINDI -> "ध्वनि"
             }
 
             val userMsg = ChatMessage(

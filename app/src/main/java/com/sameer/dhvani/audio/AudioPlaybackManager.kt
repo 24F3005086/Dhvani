@@ -8,6 +8,11 @@ import java.util.concurrent.LinkedBlockingQueue
 import java.util.concurrent.TimeUnit
 import kotlin.concurrent.thread
 
+data class AudioPlaybackChunk(
+    val samples: FloatArray,
+    val sampleRate: Int
+)
+
 class AudioPlaybackManager(
     var onPlaybackStarted: (() -> Unit)? = null,
     var onPlaybackFinished: (() -> Unit)? = null
@@ -17,8 +22,8 @@ class AudioPlaybackManager(
     }
 
     private var audioTrack: AudioTrack? = null
-    private var currentSampleRate = 22050
-    private val audioQueue = LinkedBlockingQueue<FloatArray>()
+    private var configuredTrackSampleRate: Int = -1
+    private val audioQueue = LinkedBlockingQueue<AudioPlaybackChunk>()
 
     @Volatile
     private var isWorkerRunning = false
@@ -39,39 +44,55 @@ class AudioPlaybackManager(
         startPlaybackWorker()
     }
 
-    private fun ensureAudioTrack(sampleRate: Int) {
-        if (audioTrack == null || currentSampleRate != sampleRate) {
+    private fun ensureAudioTrack(targetSampleRate: Int): AudioTrack? {
+        if (audioTrack == null || configuredTrackSampleRate != targetSampleRate) {
             try {
-                audioTrack?.release()
+                audioTrack?.apply {
+                    if (playState == AudioTrack.PLAYSTATE_PLAYING) {
+                        stop()
+                    }
+                    release()
+                }
             } catch (e: Exception) {
                 Log.w(TAG, "Error releasing previous AudioTrack", e)
             }
-            currentSampleRate = sampleRate
+            audioTrack = null
 
             val channelConfig = AudioFormat.CHANNEL_OUT_MONO
             val encoding = AudioFormat.ENCODING_PCM_FLOAT
-            val minBufSize = AudioTrack.getMinBufferSize(sampleRate, channelConfig, encoding)
+            val minBufSize = AudioTrack.getMinBufferSize(targetSampleRate, channelConfig, encoding)
+            // Generous hardware buffer (minimum 1 second of float audio) to prevent underruns
+            val bufferSizeInBytes = maxOf(minBufSize * 2, targetSampleRate * 4)
 
-            audioTrack = AudioTrack.Builder()
-                .setAudioAttributes(
-                    AudioAttributes.Builder()
-                        .setUsage(AudioAttributes.USAGE_MEDIA)
-                        .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
-                        .build()
-                )
-                .setAudioFormat(
-                    AudioFormat.Builder()
-                        .setEncoding(encoding)
-                        .setSampleRate(sampleRate)
-                        .setChannelMask(channelConfig)
-                        .build()
-                )
-                .setTransferMode(AudioTrack.MODE_STREAM)
-                .setBufferSizeInBytes(maxOf(minBufSize, 4096 * 4))
-                .build()
+            try {
+                audioTrack = AudioTrack.Builder()
+                    .setAudioAttributes(
+                        AudioAttributes.Builder()
+                            .setUsage(AudioAttributes.USAGE_MEDIA)
+                            .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
+                            .build()
+                    )
+                    .setAudioFormat(
+                        AudioFormat.Builder()
+                            .setEncoding(encoding)
+                            .setSampleRate(targetSampleRate)
+                            .setChannelMask(channelConfig)
+                            .build()
+                    )
+                    .setTransferMode(AudioTrack.MODE_STREAM)
+                    .setBufferSizeInBytes(bufferSizeInBytes)
+                    .build()
 
-            audioTrack?.play()
+                configuredTrackSampleRate = targetSampleRate
+                audioTrack?.play()
+                Log.d(TAG, "Configured AudioTrack for native sampleRate: $targetSampleRate Hz (bufSize: $bufferSizeInBytes)")
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to create AudioTrack for sampleRate: $targetSampleRate", e)
+                configuredTrackSampleRate = -1
+                return null
+            }
         }
+        return audioTrack
     }
 
     private fun startPlaybackWorker() {
@@ -79,38 +100,37 @@ class AudioPlaybackManager(
         playbackThread = thread(name = "DhvaniAudioPlaybackThread") {
             while (isWorkerRunning) {
                 try {
-                    // Poll with timeout so we can detect when queue is empty and playback is complete
-                    val samples = audioQueue.poll(150, TimeUnit.MILLISECONDS)
+                    val chunk = audioQueue.poll(150, TimeUnit.MILLISECONDS)
                     if (isInterrupted) {
                         continue
                     }
 
-                    if (samples != null) {
+                    if (chunk != null) {
                         if (!isActivelyPlaying) {
                             isActivelyPlaying = true
                             onPlaybackStarted?.invoke()
                         }
 
-                        ensureAudioTrack(currentSampleRate)
-                        audioTrack?.let { track ->
-                            if (track.playState != AudioTrack.PLAYSTATE_PLAYING) {
-                                track.play()
+                        val track = ensureAudioTrack(chunk.sampleRate)
+                        track?.let { activeTrack ->
+                            if (activeTrack.playState != AudioTrack.PLAYSTATE_PLAYING) {
+                                activeTrack.play()
                             }
+                            val samples = chunk.samples
                             var offset = 0
                             while (offset < samples.size && !isInterrupted && isWorkerRunning) {
-                                val chunkSize = minOf(1024, samples.size - offset)
-                                val written = track.write(samples, offset, chunkSize, AudioTrack.WRITE_BLOCKING)
+                                val toWrite = minOf(2048, samples.size - offset)
+                                val written = activeTrack.write(samples, offset, toWrite, AudioTrack.WRITE_BLOCKING)
                                 if (written < 0) {
                                     Log.w(TAG, "AudioTrack write returned error: $written")
                                     break
                                 }
-                                offset += chunkSize
+                                offset += written
                             }
                         }
                     } else {
-                        // Queue is empty: check if we are finished with current utterance
+                        // Queue empty: check if utterance is finished
                         if (isActivelyPlaying && !isExpectingMoreAudio && audioQueue.isEmpty()) {
-                            // Wait briefly for the audio buffer in hardware to drain out
                             try {
                                 Thread.sleep(200)
                             } catch (_: InterruptedException) {
@@ -127,7 +147,7 @@ class AudioPlaybackManager(
                 } catch (e: InterruptedException) {
                     break
                 } catch (e: Exception) {
-                    Log.e(TAG, "AudioTrack playback error", e)
+                    Log.e(TAG, "AudioTrack playback loop error", e)
                 }
             }
         }
@@ -135,17 +155,12 @@ class AudioPlaybackManager(
 
     fun playAudio(samples: FloatArray, sampleRate: Int) {
         isInterrupted = false
-        currentSampleRate = sampleRate
-        audioQueue.offer(samples)
+        audioQueue.offer(AudioPlaybackChunk(samples, sampleRate))
     }
 
     fun setExpectingMoreAudio(expecting: Boolean) {
         isExpectingMoreAudio = expecting
         Log.d(TAG, "setExpectingMoreAudio: $expecting, queueSize: ${audioQueue.size}, isPlaying: $isActivelyPlaying")
-        // If not expecting more and queue is already empty, trigger completion
-        if (!expecting && audioQueue.isEmpty() && isActivelyPlaying) {
-            // Worker loop will detect this on the next iteration
-        }
     }
 
     /**
@@ -181,5 +196,6 @@ class AudioPlaybackManager(
             Log.w(TAG, "Error releasing AudioTrack", e)
         }
         audioTrack = null
+        configuredTrackSampleRate = -1
     }
 }
