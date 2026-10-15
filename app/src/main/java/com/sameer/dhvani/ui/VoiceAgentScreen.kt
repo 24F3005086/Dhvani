@@ -80,7 +80,6 @@ fun VoiceAgentScreen(
 ) {
     val state by pipeline.agentState.collectAsState()
     val mode by pipeline.assistantMode.collectAsState()
-    val persona by pipeline.voicePersona.collectAsState()
     val messages by pipeline.messages.collectAsState()
     val metrics by pipeline.currentMetrics.collectAsState()
     val audioLevel by pipeline.audioLevel.collectAsState()
@@ -153,18 +152,10 @@ fun VoiceAgentScreen(
 
             Spacer(modifier = Modifier.height(4.dp))
 
-            // Dedicated Assistant Mode Selector (Language)
+            // Dedicated Assistant Mode Selector (Language & Engine)
             AssistantModeSelector(
                 selectedMode = mode,
                 onModeSelected = { pipeline.setAssistantMode(it) }
-            )
-
-            Spacer(modifier = Modifier.height(4.dp))
-
-            // Dedicated Voice Profile Selector (Accent / Engine)
-            VoicePersonaSelector(
-                selectedPersona = persona,
-                onPersonaSelected = { pipeline.setVoicePersona(it) }
             )
 
             Spacer(modifier = Modifier.height(6.dp))
@@ -290,8 +281,8 @@ fun AssistantModeSelector(
     ) {
         val modes = listOf(
             Triple(AssistantMode.AUTO, "Auto Detect", "🌐"),
-            Triple(AssistantMode.ENGLISH, "English", "🇬🇧"),
-            Triple(AssistantMode.HINGLISH, "Hinglish", "🇮🇳")
+            Triple(AssistantMode.ENGLISH, "English (Piper)", "🇬🇧"),
+            Triple(AssistantMode.HINGLISH, "Hinglish (Male)", "🇮🇳")
         )
 
         modes.forEach { (mode, label, icon) ->
@@ -313,47 +304,6 @@ fun AssistantModeSelector(
                         fontSize = 11.sp,
                         fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
                         color = if (isSelected) AccentCyan else TextSecondary
-                    )
-                }
-            }
-        }
-    }
-}
-
-@Composable
-fun VoicePersonaSelector(
-    selectedPersona: com.sameer.dhvani.tts.VoicePersona,
-    onPersonaSelected: (com.sameer.dhvani.tts.VoicePersona) -> Unit
-) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clip(RoundedCornerShape(12.dp))
-            .background(SurfaceCard)
-            .padding(3.dp),
-        horizontalArrangement = Arrangement.SpaceBetween
-    ) {
-        val personas = com.sameer.dhvani.tts.VoicePersona.values()
-
-        personas.forEach { p ->
-            val isSelected = selectedPersona == p
-            Box(
-                modifier = Modifier
-                    .weight(1f)
-                    .clip(RoundedCornerShape(10.dp))
-                    .background(if (isSelected) Color(0xFF2B334E) else Color.Transparent)
-                    .clickable { onPersonaSelected(p) }
-                    .padding(vertical = 5.dp),
-                contentAlignment = Alignment.Center
-            ) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text(text = p.icon, fontSize = 11.sp)
-                    Spacer(modifier = Modifier.width(3.dp))
-                    Text(
-                        text = p.displayName,
-                        fontSize = 10.sp,
-                        fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
-                        color = if (isSelected) AccentSaffron else TextSecondary
                     )
                 }
             }

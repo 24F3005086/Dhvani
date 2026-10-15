@@ -63,9 +63,6 @@ class VoiceAgentPipeline(
     private val _assistantMode = MutableStateFlow(AssistantMode.AUTO)
     val assistantMode: StateFlow<AssistantMode> = _assistantMode.asStateFlow()
 
-    private val _voicePersona = MutableStateFlow(com.sameer.dhvani.tts.VoicePersona.FEMALE_NEURAL)
-    val voicePersona: StateFlow<com.sameer.dhvani.tts.VoicePersona> = _voicePersona.asStateFlow()
-
     private val _messages = MutableStateFlow<List<ChatMessage>>(emptyList())
     val messages: StateFlow<List<ChatMessage>> = _messages.asStateFlow()
 
@@ -120,29 +117,6 @@ class VoiceAgentPipeline(
     fun setAssistantMode(mode: AssistantMode) {
         _assistantMode.value = mode
         Log.d(TAG, "Assistant mode switched to: $mode")
-    }
-
-    fun setVoicePersona(persona: com.sameer.dhvani.tts.VoicePersona) {
-        _voicePersona.value = persona
-        piperSynthesizer.setPersona(persona)
-        Log.d(TAG, "Voice persona switched to: $persona")
-        previewVoice(persona)
-    }
-
-    private fun previewVoice(persona: com.sameer.dhvani.tts.VoicePersona) {
-        if (isProcessing || audioPlayback.isActivelyPlaying) {
-            bargeIn()
-        }
-        val (phrase, lang) = when (persona) {
-            com.sameer.dhvani.tts.VoicePersona.FEMALE_NEURAL -> Pair("नमस्ते, मैं ध्वनि हूँ।", SpokenLanguage.HINDI)
-            com.sameer.dhvani.tts.VoicePersona.MALE_NEURAL -> Pair("नमस्ते, मैं ध्वनि हूँ।", SpokenLanguage.HINDI)
-            com.sameer.dhvani.tts.VoicePersona.INDIAN_ENGLISH -> Pair("Hello, I am Dhvani.", SpokenLanguage.ENGLISH)
-            com.sameer.dhvani.tts.VoicePersona.PIPER_VITS -> Pair("नमस्ते, मैं ध्वनि हूँ।", SpokenLanguage.HINDI)
-        }
-        audioPlayback.setExpectingMoreAudio(false)
-        coroutineScope.launch(Dispatchers.Default) {
-            synthesizeAndPlaySentence(phrase, lang)
-        }
     }
 
     fun start() {
@@ -265,8 +239,8 @@ class VoiceAgentPipeline(
                 Log.d(TAG, "Language routing: whisperLang='${sttResult.whisperLanguage}' | textLang='${LanguageDetector.detectLanguage(transcript)}' | targetLang=$targetLang | mode=${_assistantMode.value}")
 
                 val assistantName = when (targetLang) {
-                    SpokenLanguage.ENGLISH -> "Dhvani (English)"
-                    SpokenLanguage.HINGLISH, SpokenLanguage.HINDI -> "ध्वनि (Hinglish)"
+                    SpokenLanguage.ENGLISH -> "Dhvani (Piper Edge)"
+                    SpokenLanguage.HINGLISH, SpokenLanguage.HINDI -> "ध्वनि (Male Neural)"
                 }
 
                 // Add user message to UI
@@ -318,8 +292,8 @@ class VoiceAgentPipeline(
             }
 
             val assistantName = when (targetLang) {
-                SpokenLanguage.ENGLISH -> "Dhvani (English)"
-                SpokenLanguage.HINGLISH, SpokenLanguage.HINDI -> "ध्वनि (Hinglish)"
+                SpokenLanguage.ENGLISH -> "Dhvani (Piper Edge)"
+                SpokenLanguage.HINGLISH, SpokenLanguage.HINDI -> "ध्वनि (Male Neural)"
             }
 
             val userMsg = ChatMessage(

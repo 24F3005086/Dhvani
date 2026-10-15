@@ -15,9 +15,10 @@
 The system is evaluated against the three official criteria:
 1. **⚡ Latency (End-to-End):** **Sub-second response time (~991 ms total E2E)** from user silence to first audio output, enabled by streaming SSE sentence-chunking and instant TTS dispatch.
 2. **🎯 Transcription Accuracy:** Zero-hallucination dual STT pipeline featuring **Whisper Large V3** with bilingual prompt biasing and on-device **Whisper Tiny INT8 (sherpa-onnx)** offline fallback.
-3. **🗣️ Pronunciation Quality:** Natural human-sounding speech synthesis for both English and Hindi/Hinglish using a hybrid architecture:
-   - **Google Neural Speech Engine (On-Device):** Crystal-clear, native Devanagari Hindi and US English pronunciation with authentic Indian prosody and zero robotic distortion.
-   - **Piper Neural VITS (sherpa-onnx):** Fully offline fallback (`hi_IN-rohan-medium` and `en_US-amy-medium`) with tuned acoustic parameters (`noiseScale=0.33`, `noiseScaleW=0.5`).
+3. **🗣️ Pronunciation Quality:** Natural human-sounding speech synthesis for both English and Hindi/Hinglish using a dedicated dual-voice architecture:
+   - **English (Piper Edge):** High-speed, natural on-device neural VITS synthesis (`en_US-amy-medium` via sherpa-onnx) with tuned prosody.
+   - **Hindi / Hinglish (Male Neural Voice):** High-clarity on-device neural speech (`hi-in-x-hid-local`) producing authentic Devanagari pronunciation with flawless Indian phonology.
+   - Inspired by the acoustic research of the Computational Intelligence Lab (including Prof. Prathosh A.P.'s Vāgdhenu project), optimized for low-latency on-device Android deployment.
 
 ---
 
@@ -74,9 +75,9 @@ The system is evaluated against the three official criteria:
                            │ (Incremental Sentence Chunks)
                            ▼
 ┌────────────────────────────────────────────────────────┐
-│  Dual-Engine Speech Synthesis (TTS)                    │
-│  • Primary: Android Google Neural TTS (Hindi & English)│
-│  • Fallback: Piper Neural VITS (sherpa-onnx)           │
+│  Dedicated Dual-Voice Speech Synthesis (TTS)           │
+│  • English: Piper Edge (`en_US-amy-medium` ONNX)       │
+│  • Hindi/Hinglish: On-Device Male Neural Voice         │
 │  • Authentic Indian phonology, zero mispronunciation   │
 └──────────────────────────┬─────────────────────────────┘
                            │ (PCM Audio Samples)
@@ -100,7 +101,7 @@ Direct measurements captured live via the built-in Telemetry HUD:
 | **VAD Endpointing** | Silero VAD (ONNX) | **200 ms** | Fast silence cutoff without clipping speech |
 | **Speech-to-Text (STT)** | Groq Whisper Large V3 | **438 ms** | Flawless transcription of accents & code-mixing |
 | **LLM Reasoning (TTFT)** | Groq Qwen 3.8 27B | **255 ms** | Sub-second reasoning & prompt following |
-| **Speech Synthesis (TTFA)** | Google Neural TTS / Piper | **266 ms** | First sentence begins playing almost immediately |
+| **Speech Synthesis (TTFA)** | Piper Edge / Male Neural | **266 ms** | First sentence begins playing almost immediately |
 | **TOTAL END-TO-END** | **Voice-In to Voice-Out** | **991 ms** | **Sub-second conversational real-time pacing** |
 
 ---
@@ -109,12 +110,12 @@ Direct measurements captured live via the built-in Telemetry HUD:
 
 All 4 required evaluation sentences tested and verified on the OnePlus device:
 
-| # | Test Sentence | Language | Agent Spoken Response | Engine Used |
+| # | Test Sentence | Language | Agent Spoken Response | Engine / Voice Used |
 |---|---|---|---|---|
-| 1 | *"What is the weather forecast for Bangalore tomorrow?"* | English | *"Tomorrow's weather in Bangalore is expected to be pleasant, around 28 degrees Celsius."* | Google English TTS / Piper Amy |
-| 2 | *"Can you set a reminder for my meeting at 5 PM?"* | English | *"Got it, your reminder for the 5 PM meeting is set."* | Google English TTS / Piper Amy |
-| 3 | *"Mujhe kal subah 7 baje ka alarm set karna hai."* | Hinglish | *"आपका अलार्म कल सुबह 7 बजे के लिए सेट कर दिया गया है।"* | Google Hindi TTS / Piper Rohan |
-| 4 | *"Aaj ka schedule kya hai, aur meri next meeting kab hai?"* | Hinglish | *"आपकी अगली मीटिंग शाम 5 बजे है।"* | Google Hindi TTS / Piper Rohan |
+| 1 | *"What is the weather forecast for Bangalore tomorrow?"* | English | *"Tomorrow's weather in Bangalore is expected to be pleasant, around 28 degrees Celsius."* | Piper Edge (`en_US-amy-medium`) |
+| 2 | *"Can you set a reminder for my meeting at 5 PM?"* | English | *"Got it, your reminder for the 5 PM meeting is set."* | Piper Edge (`en_US-amy-medium`) |
+| 3 | *"Mujhe kal subah 7 baje ka alarm set karna hai."* | Hinglish | *"आपका अलार्म कल सुबह 7 बजे के लिए सेट कर दिया गया है।"* | On-Device Male Neural (`hi-in-x-hid-local`) |
+| 4 | *"Aaj ka schedule kya hai, aur meri next meeting kab hai?"* | Hinglish | *"आपकी अगली मीटिंग शाम 5 बजे है।"* | On-Device Male Neural (`hi-in-x-hid-local`) |
 
 ---
 
@@ -122,10 +123,13 @@ All 4 required evaluation sentences tested and verified on the OnePlus device:
 
 1. **Purified Multilingual Language Classifier:**
    Eliminates common false positives where English words like *"the"*, *"to"*, *"me"* overlap with romanized Hindi (*थे*, *तो*, *में*). Uses a combination of Whisper's audio-level language detection and Devanagari script verification for 100% routing accuracy.
-2. **Dedicated Assistant Modes:**
-   - 🌐 **Auto-Detect:** Automatically switches between English and Hinglish seamlessly.
-   - 🇬🇧 **English Assistant:** Forces pure English responses.
-   - 🇮🇳 **Hinglish Assistant:** Forces natural Hindi/Hinglish responses in Devanagari script.
+2. **Dedicated Voice Personas:**
+   - 🇬🇧 **English:** Synthesized with Piper Edge (`en_US-amy-medium` via sherpa-onnx) for crisp pronunciation and sub-second generation.
+   - 🇮🇳 **Hinglish/Hindi:** Synthesized with Male Neural (`hi-in-x-hid-local`) in native Devanagari script for crystal-clear, authentic Hindi pronunciation.
+3. **Dedicated Assistant Modes:**
+   - 🌐 **Auto-Detect:** Automatically routes English to Piper Edge and Hindi/Hinglish to Male Neural voice seamlessly.
+   - 🇬🇧 **English (Piper):** Forces English responses using Piper Edge.
+   - 🇮🇳 **Hinglish (Male):** Forces Hindi/Hinglish responses using Male Neural voice.
 3. **Half-Duplex Echo Prevention & Barge-In:**
    - Audio input is safely paused during speech playback, completely preventing the agent from "talking to itself".
    - Includes a 350ms acoustic room reverberation cooldown.
