@@ -282,7 +282,7 @@ fun AssistantModeSelector(
         val modes = listOf(
             Triple(AssistantMode.AUTO, "Auto Detect", "🌐"),
             Triple(AssistantMode.ENGLISH, "English (Piper)", "🇬🇧"),
-            Triple(AssistantMode.HINGLISH, "Hinglish (Male)", "🇮🇳")
+            Triple(AssistantMode.HINGLISH, "Hinglish (Supertonic)", "🇮🇳")
         )
 
         modes.forEach { (mode, label, icon) ->

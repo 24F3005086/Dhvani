@@ -240,7 +240,7 @@ class VoiceAgentPipeline(
 
                 val assistantName = when (targetLang) {
                     SpokenLanguage.ENGLISH -> "Dhvani (Piper Edge)"
-                    SpokenLanguage.HINGLISH, SpokenLanguage.HINDI -> "ध्वनि (Male Neural)"
+                    SpokenLanguage.HINGLISH, SpokenLanguage.HINDI -> "ध्वनि (Supertonic 3)"
                 }
 
                 // Add user message to UI
@@ -293,7 +293,7 @@ class VoiceAgentPipeline(
 
             val assistantName = when (targetLang) {
                 SpokenLanguage.ENGLISH -> "Dhvani (Piper Edge)"
-                SpokenLanguage.HINGLISH, SpokenLanguage.HINDI -> "ध्वनि (Male Neural)"
+                SpokenLanguage.HINGLISH, SpokenLanguage.HINDI -> "ध्वनि (Supertonic 3)"
             }
 
             val userMsg = ChatMessage(

@@ -5,9 +5,11 @@ import android.speech.tts.TextToSpeech
 import android.speech.tts.UtteranceProgressListener
 import android.util.Log
 import com.k2fsa.sherpa.onnx.GeneratedAudio
+import com.k2fsa.sherpa.onnx.GenerationConfig
 import com.k2fsa.sherpa.onnx.OfflineTts
 import com.k2fsa.sherpa.onnx.OfflineTtsConfig
 import com.k2fsa.sherpa.onnx.OfflineTtsModelConfig
+import com.k2fsa.sherpa.onnx.OfflineTtsSupertonicModelConfig
 import com.k2fsa.sherpa.onnx.OfflineTtsVitsModelConfig
 import com.sameer.dhvani.llm.GroqClient
 import com.sameer.dhvani.utils.SpokenLanguage
@@ -73,8 +75,9 @@ class PiperSynthesizer(private val context: Context) {
 
     private var hindiTts: OfflineTts? = null
     private var englishTts: OfflineTts? = null
+    private var supertonicTts: OfflineTts? = null
 
-    // Android Google Neural Male voice for authentic Hindi/Hinglish
+    // Android Google Neural Male voice for fallback Hindi/Hinglish
     private var androidTts: TextToSpeech? = null
     @Volatile private var androidTtsReady = false
 
@@ -109,7 +112,31 @@ class PiperSynthesizer(private val context: Context) {
             englishTts = OfflineTts(context.assets, englishConfig)
             Log.d(TAG, "Piper Edge English TTS (Amy) initialized successfully")
 
-            // 2. Piper Hindi Voice (hi_IN-rohan-medium) — Fallback offline VITS
+            // 2. Supertonic 3 Hindi (sherpa-onnx Flow-Matching Diffusion) — Primary Hindi Voice
+            try {
+                val supertonicModel = OfflineTtsSupertonicModelConfig(
+                    durationPredictor = "supertonic-3-hi/duration_predictor.int8.onnx",
+                    textEncoder = "supertonic-3-hi/text_encoder.int8.onnx",
+                    vectorEstimator = "supertonic-3-hi/vector_estimator.int8.onnx",
+                    vocoder = "supertonic-3-hi/vocoder.int8.onnx",
+                    ttsJson = "supertonic-3-hi/tts.json",
+                    unicodeIndexer = "supertonic-3-hi/unicode_indexer.bin",
+                    voiceStyle = "supertonic-3-hi/voice.bin"
+                )
+                val supertonicOfflineConfig = OfflineTtsModelConfig(
+                    supertonic = supertonicModel,
+                    numThreads = 2,
+                    debug = false,
+                    provider = "cpu"
+                )
+                val supertonicConfig = OfflineTtsConfig(model = supertonicOfflineConfig)
+                supertonicTts = OfflineTts(context.assets, supertonicConfig)
+                Log.d(TAG, "Supertonic 3 Hindi TTS initialized successfully")
+            } catch (e: Exception) {
+                Log.e(TAG, "Error initializing Supertonic 3 Hindi TTS", e)
+            }
+
+            // 3. Piper Hindi Voice (hi_IN-rohan-medium) — Fallback offline VITS
             val hindiVits = OfflineTtsVitsModelConfig(
                 model = "tts-hindi/hi_IN-rohan-medium.onnx",
                 tokens = "tts-hindi/tokens.txt",
@@ -208,15 +235,37 @@ class PiperSynthesizer(private val context: Context) {
             val isHinglishOrHindi = detectedLanguage == SpokenLanguage.HINGLISH || detectedLanguage == SpokenLanguage.HINDI
 
             if (isDevanagari || isHinglishOrHindi) {
-                // HINDI / HINGLISH: Always synthesized with MALE VOICE
                 val textToSpeak = if (isDevanagari) text else fallbackRomanToDevanagari(text)
-                Log.d(TAG, "Speaking Hindi with Male Voice: '$textToSpeak'")
+                Log.d(TAG, "Speaking Hindi: '$textToSpeak'")
 
+                // 1. Primary: Supertonic 3 Hindi via Sherpa-ONNX (Flow-Matching Diffusion)
+                val supertonicAudio = try {
+                    if (supertonicTts != null) {
+                        Log.d(TAG, "Synthesizing with Supertonic 3 Hindi (sid=0, numSteps=5)...")
+                        val genConfig = GenerationConfig(
+                            sid = 0,
+                            numSteps = 5,
+                            speed = 1.0f,
+                            extra = mapOf("lang" to "hi")
+                        )
+                        supertonicTts?.generateWithConfig(textToSpeak, genConfig)
+                    } else null
+                } catch (e: Exception) {
+                    Log.w(TAG, "Supertonic 3 synthesis failed, using fallback", e)
+                    null
+                }
+
+                if (supertonicAudio != null && supertonicAudio.samples.isNotEmpty()) {
+                    Log.d(TAG, "Supertonic 3 generated ${supertonicAudio.samples.size} samples @ ${supertonicAudio.sampleRate}Hz")
+                    return supertonicAudio
+                }
+
+                // 2. Fallback: Google Neural Male Voice
                 val maleAudio = if (androidTtsReady && hasDevanagari(textToSpeak)) {
                     synthesizeWithMaleTts(textToSpeak)
                 } else null
 
-                // Fallback to Piper Rohan if Google TTS is unavailable
+                // 3. Fallback: Piper Rohan VITS
                 maleAudio ?: run {
                     Log.w(TAG, "Male Google TTS unavailable, falling back to Piper Rohan")
                     hindiTts?.generate(textToSpeak, sid = 0, speed = 1.0f)
@@ -412,6 +461,13 @@ class PiperSynthesizer(private val context: Context) {
             Log.w(TAG, "Error releasing English TTS", e)
         }
         englishTts = null
+
+        try {
+            supertonicTts?.release()
+        } catch (e: Exception) {
+            Log.w(TAG, "Error releasing Supertonic TTS", e)
+        }
+        supertonicTts = null
 
         try {
             androidTts?.stop()
