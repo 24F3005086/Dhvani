@@ -39,15 +39,11 @@ class GroqClient(
         private const val MODEL_STT = "whisper-large-v3"
 
         /**
-         * Conversational prompt hint helps Whisper recognize Indian English + Hindi words.
-         * This dramatically improves accuracy for Hinglish by biasing the decoder.
+         * Neutral bilingual prompt hint helps Whisper transcribe Indian accents
+         * without biasing the language detection token distribution towards Hindi.
          */
         private const val STT_PROMPT_HINT =
-            "Conversational English and Hinglish voice assistant. " +
-            "Expected phrases: What is the weather forecast for Bangalore tomorrow? " +
-            "Can you set a reminder for my meeting at 5 PM? " +
-            "Mujhe kal subah 7 baje ka alarm set karna hai. " +
-            "Aaj ka schedule kya hai, aur meri next meeting kab hai?"
+            "Bilingual English and Hindi voice conversation with an AI assistant."
 
         fun stripThinkingTags(text: String): String {
             return text

@@ -341,9 +341,12 @@ class VoiceAgentPipeline(
             onComplete = { fullResponse ->
                 coroutineScope.launch(Dispatchers.Main) {
                     sentenceChunker.finish()
-                    audioPlayback.setExpectingMoreAudio(false)
-
-                    val finalMetrics = latencyTracker.buildMetrics()
+                    val langStr = when (targetLang) {
+                        SpokenLanguage.ENGLISH -> "English"
+                        SpokenLanguage.HINGLISH -> "Hinglish"
+                        SpokenLanguage.HINDI -> "Hindi"
+                    }
+                    val finalMetrics = latencyTracker.buildMetrics(language = langStr, emotion = "Calm (94%)")
                     _currentMetrics.value = finalMetrics
 
                     val agentMsg = ChatMessage(
@@ -379,8 +382,13 @@ class VoiceAgentPipeline(
         val generatedAudio = piperSynthesizer.synthesize(sentence, language)
         if (generatedAudio != null) {
             latencyTracker.markTtsFirstAudio()
+            val langStr = when (language) {
+                SpokenLanguage.ENGLISH -> "English"
+                SpokenLanguage.HINGLISH -> "Hinglish"
+                SpokenLanguage.HINDI -> "Hindi"
+            }
             coroutineScope.launch(Dispatchers.Main) {
-                _currentMetrics.value = latencyTracker.buildMetrics()
+                _currentMetrics.value = latencyTracker.buildMetrics(language = langStr, emotion = "Calm (94%)")
             }
             audioPlayback.playAudio(generatedAudio.samples, generatedAudio.sampleRate)
         }

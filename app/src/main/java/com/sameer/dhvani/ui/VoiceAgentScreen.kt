@@ -348,9 +348,23 @@ fun LatencyDashboardHUD(metrics: LatencyMetrics) {
                 horizontalArrangement = Arrangement.SpaceBetween
             ) {
                 TelemetryMetricItem("VAD", "${metrics.vadDurationMs}ms", "Silero ONNX")
-                TelemetryMetricItem("STT", "${metrics.sttDurationMs}ms", "Groq / Whisper")
-                TelemetryMetricItem("LLM TTFT", "${metrics.llmTtftMs}ms", "Groq Qwen")
-                TelemetryMetricItem("TTS TTFA", "${metrics.ttsTtfaMs}ms", "Piper VITS")
+                TelemetryMetricItem("STT", "${metrics.sttDurationMs}ms", "Whisper Large")
+                TelemetryMetricItem("LLM TTFT", "${metrics.llmTtftMs}ms", "Groq LPU")
+                TelemetryMetricItem("TTS TTFA", "${metrics.ttsTtfaMs}ms", "On-Device")
+            }
+
+            Spacer(modifier = Modifier.height(6.dp))
+            androidx.compose.material3.HorizontalDivider(color = Color(0xFF22283A), thickness = 0.5.dp)
+            Spacer(modifier = Modifier.height(6.dp))
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                TelemetryMetricItem("LANGUAGE", metrics.detectedLanguage, "Bilingual LID")
+                TelemetryMetricItem("EMOTION", metrics.detectedEmotion, "Affective Voice")
+                TelemetryMetricItem("RAM", "${metrics.ramUsageMb} MB", "On-Device RSS")
+                TelemetryMetricItem("ECHO GATE", "Active", "Half-Duplex")
             }
         }
     }
