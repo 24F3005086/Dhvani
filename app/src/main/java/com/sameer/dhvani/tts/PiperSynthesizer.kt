@@ -21,6 +21,13 @@ import java.util.Locale
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 
+enum class VoicePersona(val displayName: String, val icon: String, val description: String) {
+    FEMALE_NEURAL("Female", "🌸", "Google Neural Voice A (Warm & Expressive)"),
+    MALE_NEURAL("Male", "🎙️", "Google Neural Voice D (Deep & Authoritative)"),
+    INDIAN_ENGLISH("Indian Eng", "🇮🇳", "Google Indic English (Natural Accent)"),
+    PIPER_VITS("Piper Edge", "⚡", "100% Offline Sherpa-ONNX VITS")
+}
+
 class PiperSynthesizer(private val context: Context) {
     companion object {
         private const val TAG = "PiperSynthesizer"
@@ -79,9 +86,16 @@ class PiperSynthesizer(private val context: Context) {
     @Volatile private var androidTtsReady = false
     @Volatile private var androidHindiAvailable = false
 
+    @Volatile var currentPersona: VoicePersona = VoicePersona.FEMALE_NEURAL
+
     init {
         initModels()
         initAndroidTts()
+    }
+
+    fun setPersona(persona: VoicePersona) {
+        currentPersona = persona
+        Log.d(TAG, "Switched voice persona to: $persona (${persona.description})")
     }
 
     private fun initModels() {
@@ -90,10 +104,6 @@ class PiperSynthesizer(private val context: Context) {
             Log.d(TAG, "Prepared espeak-ng-data at: $espeakDir")
 
             // 1. Hindi Voice (hi_IN-rohan-medium)
-            // Tuned parameters for better pronunciation:
-            //   - noiseScale=0.33 (lower = cleaner, less breathy)
-            //   - noiseScaleW=0.5 (lower = more consistent pronunciation)
-            //   - lengthScale=1.1 (slightly slower = clearer articulation)
             val hindiVits = OfflineTtsVitsModelConfig(
                 model = "tts-hindi/hi_IN-rohan-medium.onnx",
                 tokens = "tts-hindi/tokens.txt",
@@ -115,10 +125,6 @@ class PiperSynthesizer(private val context: Context) {
             Log.d(TAG, "Piper Hindi TTS (Rohan) initialized with tuned parameters")
 
             // 2. English Voice (en_US-amy-medium)
-            // Tuned for clarity:
-            //   - noiseScale=0.33 (cleaner)
-            //   - noiseScaleW=0.5 (more consistent)
-            //   - lengthScale=1.0 (natural speed)
             val englishVits = OfflineTtsVitsModelConfig(
                 model = "tts-english/en_US-amy-medium.onnx",
                 tokens = "tts-english/tokens.txt",
@@ -143,17 +149,11 @@ class PiperSynthesizer(private val context: Context) {
         }
     }
 
-    /**
-     * Initialize Android's built-in TextToSpeech engine (Google TTS).
-     * This provides MUCH higher quality Hindi pronunciation than Piper,
-     * since Google's Hindi voice has proper prosody and natural intonation.
-     * It's still on-device (the voice data is downloaded to the phone).
-     */
     private fun initAndroidTts() {
         androidTts = TextToSpeech(context) { status ->
             if (status == TextToSpeech.SUCCESS) {
                 androidTtsReady = true
-                val hindiLocale = Locale("hi", "IN")
+                val hindiLocale = Locale.forLanguageTag("hi-IN")
                 val hindiResult = androidTts?.isLanguageAvailable(hindiLocale)
                 androidHindiAvailable = (hindiResult == TextToSpeech.LANG_AVAILABLE
                     || hindiResult == TextToSpeech.LANG_COUNTRY_AVAILABLE
@@ -161,7 +161,6 @@ class PiperSynthesizer(private val context: Context) {
 
                 if (androidHindiAvailable) {
                     androidTts?.language = hindiLocale
-                    // Set slightly faster speech rate for conversational feel
                     androidTts?.setSpeechRate(1.05f)
                     androidTts?.setPitch(1.0f)
                     Log.d(TAG, "Android TTS Hindi voice available! Using Google Hindi for superior pronunciation")
@@ -209,14 +208,10 @@ class PiperSynthesizer(private val context: Context) {
     }
 
     /**
-     * Synthesizes speech with language-appropriate voice:
+     * Synthesizes speech with persona and language routing:
      *
-     * Hindi/Hinglish path (priority order):
-     *   1. Android TTS (Google Hindi voice) — BEST pronunciation, native prosody
-     *   2. Piper hi_IN-rohan-medium — fallback if Android TTS unavailable
-     *
-     * English path:
-     *   - Piper en_US-amy-medium — good quality English voice
+     * 1. If PIPER_VITS selected: forces local on-device Piper neural VITS (100% offline).
+     * 2. If FEMALE_NEURAL / MALE_NEURAL / INDIAN_ENGLISH: uses Google Neural Voice with exact timbre match.
      */
     fun synthesize(rawText: String, detectedLanguage: SpokenLanguage): GeneratedAudio? {
         val text = cleanTextForSpeech(rawText)
@@ -226,48 +221,40 @@ class PiperSynthesizer(private val context: Context) {
             val isDevanagari = hasDevanagari(text)
             val isHinglishOrHindi = detectedLanguage == SpokenLanguage.HINGLISH || detectedLanguage == SpokenLanguage.HINDI
 
+            // 1. Force 100% offline Piper VITS if selected
+            if (currentPersona == VoicePersona.PIPER_VITS) {
+                return synthesizeWithPiper(text, isDevanagari || isHinglishOrHindi)
+            }
+
+            // 2. Hindi / Hinglish Path
             if (isDevanagari || isHinglishOrHindi) {
-                // HINDI PATH: Try Android TTS first for best quality
                 val textToSpeak = if (isDevanagari) text else fallbackRomanToDevanagari(text)
 
                 if (androidTtsReady && hasDevanagari(textToSpeak)) {
-                    Log.d(TAG, "Speaking Hindi with Android Google TTS: '$textToSpeak'")
+                    Log.d(TAG, "Speaking Hindi with persona $currentPersona: '$textToSpeak'")
                     val androidAudio = synthesizeWithAndroidTts(textToSpeak, Locale.forLanguageTag("hi-IN"))
                     if (androidAudio != null) {
                         return androidAudio
                     }
                     Log.w(TAG, "Android TTS synthesis failed, falling back to Piper Rohan")
                 }
-
-                // Fallback: Piper Rohan with tuned parameters
-                Log.d(TAG, "Speaking Hindi with Piper Rohan: '$textToSpeak'")
-                val audio = hindiTts?.generate(textToSpeak, sid = 0, speed = 1.0f)
-                if (audio != null) {
-                    audio
-                } else {
-                    Log.w(TAG, "Hindi TTS failed, falling back to English voice")
-                    englishTts?.generate(text, sid = 0, speed = 1.0f)
-                }
+                synthesizeWithPiper(textToSpeak, true)
             } else {
-                // ENGLISH PATH: Try Android Google TTS first for studio clarity
+                // 3. English Path
                 if (androidTtsReady) {
-                    Log.d(TAG, "Speaking English with Android Google TTS: '$text'")
-                    val androidAudio = synthesizeWithAndroidTts(text, Locale.US)
+                    val locale = if (currentPersona == VoicePersona.INDIAN_ENGLISH) {
+                        Locale.forLanguageTag("en-IN")
+                    } else {
+                        Locale.US
+                    }
+                    Log.d(TAG, "Speaking English with persona $currentPersona: '$text'")
+                    val androidAudio = synthesizeWithAndroidTts(text, locale)
                     if (androidAudio != null) {
                         return androidAudio
                     }
                     Log.w(TAG, "Android TTS synthesis failed, falling back to Piper Amy")
                 }
-
-                // Fallback: Piper Amy
-                Log.d(TAG, "Speaking English with Piper Amy: '$text'")
-                val audio = englishTts?.generate(text, sid = 0, speed = 1.0f)
-                if (audio != null) {
-                    audio
-                } else {
-                    Log.w(TAG, "English TTS failed, falling back to Hindi voice")
-                    hindiTts?.generate(text, sid = 0, speed = 1.0f)
-                }
+                synthesizeWithPiper(text, false)
             }
         } catch (e: Exception) {
             Log.e(TAG, "Synthesis failed for text: '$text'", e)
@@ -275,12 +262,21 @@ class PiperSynthesizer(private val context: Context) {
         }
     }
 
+    private fun synthesizeWithPiper(text: String, isHindi: Boolean): GeneratedAudio? {
+        return if (isHindi) {
+            val devText = if (hasDevanagari(text)) text else fallbackRomanToDevanagari(text)
+            Log.d(TAG, "Synthesizing with Piper Rohan: '$devText'")
+            hindiTts?.generate(devText, sid = 0, speed = 1.0f)
+                ?: englishTts?.generate(text, sid = 0, speed = 1.0f)
+        } else {
+            Log.d(TAG, "Synthesizing with Piper Amy: '$text'")
+            englishTts?.generate(text, sid = 0, speed = 1.0f)
+                ?: hindiTts?.generate(text, sid = 0, speed = 1.0f)
+        }
+    }
+
     /**
-     * Synthesizes text using Android's built-in Google TextToSpeech engine.
-     * Produces natural prosody, human intonation, and zero robotic distortion.
-     *
-     * This method synthesizes to a temporary WAV file, then reads it back as a
-     * GeneratedAudio object to maintain compatibility with the audio pipeline.
+     * Synthesizes text using Android's built-in Google TextToSpeech engine with exact voice timbre selection.
      */
     private fun synthesizeWithAndroidTts(text: String, locale: Locale): GeneratedAudio? {
         val tts = androidTts ?: return null
@@ -288,6 +284,29 @@ class PiperSynthesizer(private val context: Context) {
 
         try {
             tts.language = locale
+
+            // Pick exact voice based on active persona
+            val voices = tts.voices ?: emptySet()
+            val targetVoiceName = when (currentPersona) {
+                VoicePersona.FEMALE_NEURAL -> {
+                    if (locale.language == "hi") "hi-in-x-hia-local" else "en-us-x-sfg-local"
+                }
+                VoicePersona.MALE_NEURAL -> {
+                    if (locale.language == "hi") "hi-in-x-hid-local" else "en-in-x-end-local"
+                }
+                VoicePersona.INDIAN_ENGLISH -> {
+                    if (locale.language == "hi") "hi-in-x-hia-local" else "en-in-x-enc-local"
+                }
+                VoicePersona.PIPER_VITS -> null
+            }
+
+            if (targetVoiceName != null) {
+                val matched = voices.firstOrNull { it.name == targetVoiceName }
+                if (matched != null) {
+                    tts.voice = matched
+                    Log.d(TAG, "Applied explicit on-device neural voice: ${matched.name}")
+                }
+            }
 
             val tempFile = File(context.cacheDir, "android_tts_${System.currentTimeMillis()}.wav")
             val latch = CountDownLatch(1)
@@ -311,13 +330,12 @@ class PiperSynthesizer(private val context: Context) {
                 }
             })
 
-            val result = tts.synthesizeToFile(text, null, tempFile, "dhvani_hindi_${System.currentTimeMillis()}")
+            val result = tts.synthesizeToFile(text, null, tempFile, "dhvani_synth_${System.currentTimeMillis()}")
             if (result != TextToSpeech.SUCCESS) {
                 Log.e(TAG, "Android TTS synthesizeToFile returned error: $result")
                 return null
             }
 
-            // Wait for synthesis to complete (max 10 seconds)
             if (!latch.await(10, TimeUnit.SECONDS)) {
                 Log.e(TAG, "Android TTS synthesis timed out")
                 tempFile.delete()
@@ -330,7 +348,6 @@ class PiperSynthesizer(private val context: Context) {
                 return null
             }
 
-            // Read WAV file and convert to FloatArray samples
             val audio = readWavAsGeneratedAudio(tempFile)
             tempFile.delete()
             return audio
@@ -341,14 +358,9 @@ class PiperSynthesizer(private val context: Context) {
         }
     }
 
-    /**
-     * Reads a WAV file produced by Android TTS and converts it to GeneratedAudio.
-     * Handles common WAV formats (16-bit PCM, various sample rates).
-     */
     private fun readWavAsGeneratedAudio(wavFile: File): GeneratedAudio? {
         try {
             RandomAccessFile(wavFile, "r").use { raf ->
-                // Read RIFF header
                 val riff = ByteArray(4)
                 raf.readFully(riff)
                 if (String(riff) != "RIFF") {
@@ -370,7 +382,6 @@ class PiperSynthesizer(private val context: Context) {
                 var dataSize = 0
                 var dataOffset = 0L
 
-                // Parse chunks
                 while (raf.filePointer < raf.length()) {
                     val chunkId = ByteArray(4)
                     if (raf.read(chunkId) < 4) break
@@ -385,11 +396,11 @@ class PiperSynthesizer(private val context: Context) {
                             val fmtData = ByteArray(chunkSize)
                             raf.readFully(fmtData)
                             val fmt = ByteBuffer.wrap(fmtData).order(ByteOrder.LITTLE_ENDIAN)
-                            fmt.short // audioFormat
+                            fmt.short
                             numChannels = fmt.short.toInt()
                             sampleRate = fmt.int
-                            fmt.int // byteRate
-                            fmt.short // blockAlign
+                            fmt.int
+                            fmt.short
                             bitsPerSample = fmt.short.toInt()
                         }
                         "data" -> {
@@ -412,7 +423,6 @@ class PiperSynthesizer(private val context: Context) {
                 val rawData = ByteArray(dataSize)
                 raf.readFully(rawData)
 
-                // Convert to float samples
                 val bytesPerSample = bitsPerSample / 8
                 val totalSamples = dataSize / (bytesPerSample * numChannels)
                 val samples = FloatArray(totalSamples)
@@ -421,7 +431,6 @@ class PiperSynthesizer(private val context: Context) {
                 for (i in 0 until totalSamples) {
                     if (bitsPerSample == 16) {
                         val sample = buf.short
-                        // For multi-channel, take first channel only
                         for (ch in 1 until numChannels) {
                             if (buf.hasRemaining()) buf.short
                         }
@@ -435,7 +444,7 @@ class PiperSynthesizer(private val context: Context) {
                     }
                 }
 
-                Log.d(TAG, "Android TTS WAV: ${samples.size} samples @ ${sampleRate}Hz, ${bitsPerSample}bit, ${numChannels}ch")
+                Log.d(TAG, "WAV generated: ${samples.size} samples @ ${sampleRate}Hz, ${bitsPerSample}bit")
                 return GeneratedAudio(samples, sampleRate)
             }
         } catch (e: Exception) {
