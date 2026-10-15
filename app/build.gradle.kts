@@ -12,9 +12,7 @@ plugins {
 
 android {
     namespace = "com.sameer.dhvani"
-    compileSdk {
-        version = release(36)
-    }
+    compileSdk = 35
 
     defaultConfig {
         applicationId = "com.sameer.dhvani"
@@ -24,7 +22,7 @@ android {
         versionName = "1.0"
 
         ndk {
-            abiFilters += listOf("arm64-v8a")
+            abiFilters += listOf("arm64-v8a", "armeabi-v7a")
         }
 
         val groqKey = localProperties.getProperty("GROQ_API_KEY") ?: ""
