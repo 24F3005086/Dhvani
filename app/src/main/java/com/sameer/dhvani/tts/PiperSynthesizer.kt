@@ -82,9 +82,6 @@ class PiperSynthesizer(private val context: Context) {
     private val englishLock = Any()
     private val hindiLock = Any()
 
-    @Volatile private var cachedHindiFiller: GeneratedAudio? = null
-    @Volatile private var cachedEnglishFiller: GeneratedAudio? = null
-
     // Android Google Neural Male voice for fallback Hindi/Hinglish
     private var androidTts: TextToSpeech? = null
     @Volatile private var androidTtsReady = false
@@ -231,63 +228,9 @@ class PiperSynthesizer(private val context: Context) {
     }
 
     /**
-     * Prewarms and caches instant micro-fillers in memory.
-     * Generates:
-     * - Hindi/Hinglish: "हाँ..." via Supertonic 3 (numSteps=2)
-     * - English: "Sure..." via Piper Amy
-     */
-    fun prewarmFillers() {
-        try {
-            if (cachedHindiFiller == null && supertonicTts != null) {
-                Log.d(TAG, "Prewarming Supertonic 3 Hindi filler ('हाँ...')...")
-                val genConfig = GenerationConfig(
-                    sid = 0,
-                    numSteps = 2,
-                    speed = 1.05f,
-                    extra = mapOf("lang" to "hi")
-                )
-                val audio = synchronized(supertonicLock) {
-                    supertonicTts?.generateWithConfig("हाँ...", genConfig)
-                }
-                if (audio != null && audio.samples.isNotEmpty()) {
-                    cachedHindiFiller = audio
-                    Log.d(TAG, "Prewarmed Hindi filler successfully: ${audio.samples.size} samples @ ${audio.sampleRate}Hz")
-                }
-            }
-        } catch (e: Exception) {
-            Log.w(TAG, "Failed to prewarm Supertonic Hindi filler", e)
-        }
-
-        try {
-            if (cachedEnglishFiller == null && englishTts != null) {
-                Log.d(TAG, "Prewarming Piper English filler ('Sure...')...")
-                val audio = synchronized(englishLock) {
-                    englishTts?.generate("Sure...", sid = 0, speed = 1.0f)
-                }
-                if (audio != null && audio.samples.isNotEmpty()) {
-                    cachedEnglishFiller = audio
-                    Log.d(TAG, "Prewarmed English filler successfully: ${audio.samples.size} samples @ ${audio.sampleRate}Hz")
-                }
-            }
-        } catch (e: Exception) {
-            Log.w(TAG, "Failed to prewarm English filler", e)
-        }
-    }
-
-    /**
-     * Retrieves the pre-cached micro-filler audio for instant (<100ms) perceived latency.
-     */
-    fun getFillerAudio(language: SpokenLanguage): GeneratedAudio? {
-        return when (language) {
-            SpokenLanguage.HINDI, SpokenLanguage.HINGLISH -> cachedHindiFiller
-            SpokenLanguage.ENGLISH -> cachedEnglishFiller
-        }
-    }
-
-    /**
      * Dedicated Dual-Voice Routing:
      * - ENGLISH: Synthesized with On-Device English Voice (Amy).
-     * - HINGLISH / HINDI: Primary voice is Supertonic 3 Hindi (flow-matching diffusion with 4 threads and 2 steps).
+     * - HINGLISH / HINDI: Primary voice is Supertonic 3 Hindi (flow-matching diffusion with 4 threads and 5 steps for pristine clarity).
      *   Fallbacks: Piper Rohan VITS, Android Google Neural Male voice.
      *   Numbers like 5 and 7 are fully normalized to Devanagari words (पाँच, सात) so pronunciation is flawless.
      */
@@ -305,14 +248,14 @@ class PiperSynthesizer(private val context: Context) {
                 val normalizedHindi = NumberNormalizer.normalizeForHindi(baseDevanagari)
                 Log.d(TAG, "Speaking Hindi: original='$text' -> normalized='$normalizedHindi'")
 
-                // 1. Primary: Supertonic 3 Hindi (sherpa-onnx Flow-Matching Diffusion, numSteps=2, 4 threads)
+                // 1. Primary: Supertonic 3 Hindi (sherpa-onnx Flow-Matching Diffusion, numSteps=5, speed=1.0f, 4 threads)
                 val supertonicAudio = try {
                     if (supertonicTts != null) {
-                        Log.d(TAG, "Synthesizing with Supertonic 3 Hindi (numSteps=2, 4 threads)...")
+                        Log.d(TAG, "Synthesizing with Supertonic 3 Hindi (numSteps=5, speed=1.0f, 4 threads)...")
                         val genConfig = GenerationConfig(
                             sid = 0,
-                            numSteps = 2,
-                            speed = 1.05f,
+                            numSteps = 5,
+                            speed = 1.0f,
                             extra = mapOf("lang" to "hi")
                         )
                         val audio = synchronized(supertonicLock) {
@@ -528,9 +471,6 @@ class PiperSynthesizer(private val context: Context) {
     }
 
     fun release() {
-        cachedHindiFiller = null
-        cachedEnglishFiller = null
-
         try {
             hindiTts?.release()
         } catch (e: Exception) {

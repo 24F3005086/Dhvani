@@ -112,11 +112,6 @@ class VoiceAgentPipeline(
             onSpeechUtterance = { samples -> handleSpeechUtterance(samples) },
             onAudioLevel = { level -> _audioLevel.value = level }
         )
-
-        // Prewarm instant micro-fillers in background for <100ms response time
-        coroutineScope.launch(Dispatchers.Default) {
-            piperSynthesizer.prewarmFillers()
-        }
     }
 
     fun setAssistantMode(mode: AssistantMode) {
@@ -329,41 +324,8 @@ class VoiceAgentPipeline(
 
         audioPlayback.setExpectingMoreAudio(true)
 
-        // 1. Instant Micro-Filler: Immediate acknowledgement audio in <100ms
-        val filler = piperSynthesizer.getFillerAudio(targetLang)
-        val playedFiller = if (filler != null && filler.samples.isNotEmpty()) {
-            Log.d(TAG, "Playing instant micro-filler for $targetLang (${filler.samples.size} samples @ ${filler.sampleRate}Hz)")
-            latencyTracker.markTtsStart()
-            latencyTracker.markTtsFirstAudio()
-            val langStr = when (targetLang) {
-                SpokenLanguage.ENGLISH -> "English"
-                SpokenLanguage.HINGLISH -> "Hinglish"
-                SpokenLanguage.HINDI -> "Hindi"
-            }
-            coroutineScope.launch(Dispatchers.Main) {
-                _currentMetrics.value = latencyTracker.buildMetrics(language = langStr, emotion = "Calm (94%)")
-                _agentState.value = AgentState.SPEAKING
-            }
-            audioPlayback.playAudio(filler.samples, filler.sampleRate)
-            true
-        } else {
-            false
-        }
-
-        var isFirstChunkOfResponse = true
-
         val sentenceChunker = SentenceChunker { sentence ->
-            val textToSpeak = if (isFirstChunkOfResponse && playedFiller) {
-                isFirstChunkOfResponse = false
-                val cleaned = cleanLeadingFillerWord(sentence, targetLang)
-                if (cleaned.isBlank()) sentence else cleaned
-            } else {
-                isFirstChunkOfResponse = false
-                sentence
-            }
-            if (textToSpeak.isNotBlank()) {
-                synthesizeAndPlaySentence(textToSpeak, targetLang)
-            }
+            synthesizeAndPlaySentence(sentence, targetLang)
         }
 
         groqClient.streamResponse(
@@ -408,17 +370,6 @@ class VoiceAgentPipeline(
                 }
             }
         )
-    }
-
-    private fun cleanLeadingFillerWord(sentence: String, language: SpokenLanguage): String {
-        return when (language) {
-            SpokenLanguage.HINDI, SpokenLanguage.HINGLISH -> {
-                sentence.replaceFirst(Regex("^(हाँ|हां|जी|अच्छा|Haan|Ha|Acha|Achha)[,\\s।]+", RegexOption.IGNORE_CASE), "").trim()
-            }
-            SpokenLanguage.ENGLISH -> {
-                sentence.replaceFirst(Regex("^(Sure|Certainly|Yes|Okay|Got it)[,\\s\\.]+", RegexOption.IGNORE_CASE), "").trim()
-            }
-        }
     }
 
     private fun synthesizeAndPlaySentence(sentence: String, language: SpokenLanguage) {
