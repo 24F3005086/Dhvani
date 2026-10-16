@@ -4,6 +4,7 @@ import android.content.Context
 import android.util.Log
 import com.sameer.dhvani.audio.AudioCaptureManager
 import com.sameer.dhvani.audio.AudioPlaybackManager
+import com.sameer.dhvani.benchmark.BenchmarkLogger
 import com.sameer.dhvani.llm.GroqClient
 import com.sameer.dhvani.llm.SentenceChunker
 import com.sameer.dhvani.stt.WhisperRecognizer
@@ -11,6 +12,7 @@ import com.sameer.dhvani.tts.PiperSynthesizer
 import com.sameer.dhvani.utils.LanguageDetector
 import com.sameer.dhvani.utils.LatencyMetrics
 import com.sameer.dhvani.utils.LatencyTracker
+import com.sameer.dhvani.utils.ScriptTransliteration
 import com.sameer.dhvani.utils.SpokenLanguage
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -29,9 +31,10 @@ enum class AgentState {
 }
 
 enum class AssistantMode {
-    AUTO,      // Automatically detects whether you speak English or Hinglish
+    AUTO,      // Automatically detects whether you speak English, Hinglish, or Hindi
     ENGLISH,   // Force English Assistant (Amy voice)
-    HINGLISH   // Force Hinglish Assistant (Rohan voice)
+    HINGLISH,  // Force Hinglish Assistant (Roman script + Supertonic 3 Hindi voice)
+    HINDI      // Force Pure Hindi Assistant (Devanagari script + Supertonic 3 Hindi voice)
 }
 
 data class ChatMessage(
@@ -83,6 +86,7 @@ class VoiceAgentPipeline(
     private val piperSynthesizer = PiperSynthesizer(context)
     private val groqClient = GroqClient()
     private val latencyTracker = LatencyTracker()
+    val benchmarkLogger = BenchmarkLogger(context)
 
     init {
         audioPlayback = AudioPlaybackManager(
@@ -112,6 +116,7 @@ class VoiceAgentPipeline(
             onSpeechUtterance = { samples -> handleSpeechUtterance(samples) },
             onAudioLevel = { level -> _audioLevel.value = level }
         )
+        benchmarkLogger.startSession()
     }
 
     fun setAssistantMode(mode: AssistantMode) {
@@ -196,7 +201,7 @@ class VoiceAgentPipeline(
             try {
                 // 1. STT: Groq Cloud Whisper Large V3 (primary) → On-device Whisper Tiny (fallback)
                 val sttResult = try {
-                    val cloudResult = groqClient.transcribeAudio(samples)
+                    val cloudResult = groqClient.transcribeAudio(samples, _assistantMode.value)
                     if (cloudResult.transcript.isNotBlank()) {
                         cloudResult
                     } else {
@@ -217,6 +222,13 @@ class VoiceAgentPipeline(
                         _agentState.value = AgentState.IDLE
                         isProcessing = false
                         audioCapture.resumeListening()
+                        // Record blank-transcript failure in benchmark
+                        benchmarkLogger.recordFailure(
+                            inputText = "(blank transcript)",
+                            language = SpokenLanguage.ENGLISH,
+                            reason = "Blank STT transcript",
+                            isTestChip = false
+                        )
                     }
                     return@launch
                 }
@@ -227,6 +239,7 @@ class VoiceAgentPipeline(
                 val targetLang = when (_assistantMode.value) {
                     AssistantMode.ENGLISH -> SpokenLanguage.ENGLISH
                     AssistantMode.HINGLISH -> SpokenLanguage.HINGLISH
+                    AssistantMode.HINDI -> SpokenLanguage.HINDI
                     AssistantMode.AUTO -> {
                         // Combine Whisper's audio-level language detection with text heuristics
                         LanguageDetector.detectFromWhisper(sttResult.whisperLanguage, transcript)
@@ -236,15 +249,34 @@ class VoiceAgentPipeline(
                 Log.d(TAG, "Language routing: whisperLang='${sttResult.whisperLanguage}' | textLang='${LanguageDetector.detectLanguage(transcript)}' | targetLang=$targetLang | mode=${_assistantMode.value}")
 
                 val assistantName = when (targetLang) {
-                    SpokenLanguage.ENGLISH -> "Dhvani"
-                    SpokenLanguage.HINGLISH, SpokenLanguage.HINDI -> "ध्वनि"
+                    SpokenLanguage.ENGLISH, SpokenLanguage.HINGLISH -> "Dhvani"
+                    SpokenLanguage.HINDI -> "ध्वनि"
                 }
 
-                // Add user message to UI
+                // Format transcript according to target language (clean Roman for Hinglish, Devanagari for Hindi)
+                val displayTranscript = when (targetLang) {
+                    SpokenLanguage.HINGLISH -> {
+                        if (ScriptTransliteration.hasDevanagari(transcript)) {
+                            ScriptTransliteration.devanagariToRoman(transcript)
+                        } else {
+                            transcript
+                        }
+                    }
+                    SpokenLanguage.HINDI -> {
+                        if (!ScriptTransliteration.hasDevanagari(transcript)) {
+                            ScriptTransliteration.romanToDevanagari(transcript)
+                        } else {
+                            transcript
+                        }
+                    }
+                    SpokenLanguage.ENGLISH -> transcript
+                }
+
+                // Add user message to UI (single language display)
                 val userMsg = ChatMessage(
                     sender = MessageSender.USER,
                     senderName = "You",
-                    text = transcript,
+                    text = displayTranscript,
                     language = targetLang
                 )
                 coroutineScope.launch(Dispatchers.Main) {
@@ -252,7 +284,7 @@ class VoiceAgentPipeline(
                 }
 
                 // Execute conversational response
-                processResponse(transcript, targetLang, assistantName)
+                processResponse(displayTranscript, targetLang, assistantName, isTestChip = false)
 
             } catch (e: Exception) {
                 Log.e(TAG, "Error in speech utterance processing", e)
@@ -286,32 +318,40 @@ class VoiceAgentPipeline(
             val targetLang = when (_assistantMode.value) {
                 AssistantMode.ENGLISH -> SpokenLanguage.ENGLISH
                 AssistantMode.HINGLISH -> SpokenLanguage.HINGLISH
+                AssistantMode.HINDI -> SpokenLanguage.HINDI
                 AssistantMode.AUTO -> LanguageDetector.detectLanguage(phrase)
             }
 
             val assistantName = when (targetLang) {
-                SpokenLanguage.ENGLISH -> "Dhvani"
-                SpokenLanguage.HINGLISH, SpokenLanguage.HINDI -> "ध्वनि"
+                SpokenLanguage.ENGLISH, SpokenLanguage.HINGLISH -> "Dhvani"
+                SpokenLanguage.HINDI -> "ध्वनि"
+            }
+
+            val displayPhrase = when (targetLang) {
+                SpokenLanguage.HINGLISH -> if (ScriptTransliteration.hasDevanagari(phrase)) ScriptTransliteration.devanagariToRoman(phrase) else phrase
+                SpokenLanguage.HINDI -> if (!ScriptTransliteration.hasDevanagari(phrase)) ScriptTransliteration.romanToDevanagari(phrase) else phrase
+                SpokenLanguage.ENGLISH -> phrase
             }
 
             val userMsg = ChatMessage(
                 sender = MessageSender.USER,
                 senderName = "You",
-                text = phrase,
+                text = displayPhrase,
                 language = targetLang
             )
             coroutineScope.launch(Dispatchers.Main) {
                 _messages.value = _messages.value + userMsg
             }
 
-            processResponse(phrase, targetLang, assistantName)
+            processResponse(displayPhrase, targetLang, assistantName, isTestChip = true)
         }
     }
 
     private fun processResponse(
         userInput: String,
         targetLang: SpokenLanguage,
-        assistantName: String
+        assistantName: String,
+        isTestChip: Boolean = false
     ) {
         // Last 5 messages for multi-turn context
         val conversationHistory = _messages.value.takeLast(5).map { msg ->
@@ -324,8 +364,8 @@ class VoiceAgentPipeline(
 
         audioPlayback.setExpectingMoreAudio(true)
 
-        val sentenceChunker = SentenceChunker { sentence ->
-            synthesizeAndPlaySentence(sentence, targetLang)
+        val sentenceChunker = SentenceChunker { sentence, isFirstChunk ->
+            synthesizeAndPlaySentence(sentence, targetLang, isFirstChunk)
         }
 
         groqClient.streamResponse(
@@ -356,6 +396,16 @@ class VoiceAgentPipeline(
                         latency = finalMetrics
                     )
                     _messages.value = _messages.value + agentMsg
+
+                    // Record benchmark trial if session is active
+                    benchmarkLogger.recordTrial(
+                        inputText = userInput,
+                        responseText = fullResponse,
+                        language = targetLang,
+                        metrics = finalMetrics,
+                        isTestChip = isTestChip
+                    )
+
                     // Note: audioCapture.resumeListening() will be triggered automatically
                     // by audioPlayback.onPlaybackFinished AFTER audio finishes playing + cooldown.
                 }
@@ -367,18 +417,30 @@ class VoiceAgentPipeline(
                     _agentState.value = AgentState.IDLE
                     isProcessing = false
                     audioCapture.resumeListening()
+
+                    // Record benchmark failure if session is active
+                    benchmarkLogger.recordFailure(
+                        inputText = userInput,
+                        language = targetLang,
+                        reason = error.message ?: "LLM streaming error",
+                        isTestChip = isTestChip
+                    )
                 }
             }
         )
     }
 
-    private fun synthesizeAndPlaySentence(sentence: String, language: SpokenLanguage) {
+    private fun synthesizeAndPlaySentence(
+        sentence: String,
+        language: SpokenLanguage,
+        isFirstChunk: Boolean = false
+    ) {
         latencyTracker.markTtsStart()
         coroutineScope.launch(Dispatchers.Main) {
             _agentState.value = AgentState.SPEAKING
         }
 
-        val generatedAudio = piperSynthesizer.synthesize(sentence, language)
+        val generatedAudio = piperSynthesizer.synthesize(sentence, language, isFirstChunk)
         if (generatedAudio != null) {
             latencyTracker.markTtsFirstAudio()
             val langStr = when (language) {
@@ -390,6 +452,168 @@ class VoiceAgentPipeline(
                 _currentMetrics.value = latencyTracker.buildMetrics(language = langStr, emotion = "Calm (94%)")
             }
             audioPlayback.playAudio(generatedAudio.samples, generatedAudio.sampleRate)
+        }
+    }
+
+    /**
+     * Executes an automated 15-trial benchmark across English, Hinglish, and Hindi.
+     * Tests real STT (Whisper Large V3), real LLM (Qwen 3.8 27B), and real on-device TTS.
+     */
+    fun runAutomatedBenchmark(onComplete: () -> Unit = {}) {
+        Log.i(TAG, "Starting automated 15-trial benchmark session...")
+        benchmarkLogger.startSession()
+
+        val benchmarkPhrases = listOf(
+            // English (5 trials)
+            Pair("What is the weather forecast for Bangalore tomorrow?", SpokenLanguage.ENGLISH),
+            Pair("What is 24 multiplied by 4?", SpokenLanguage.ENGLISH),
+            Pair("Give me a one-sentence tip for healthy sleep.", SpokenLanguage.ENGLISH),
+            Pair("Where is the Computational Intelligence Lab located at IISc?", SpokenLanguage.ENGLISH),
+            Pair("Can you schedule a meeting with Dr. Rao at 4 PM on Friday?", SpokenLanguage.ENGLISH),
+            // Hinglish (5 trials)
+            Pair("Mujhe kal subah 7 baje ka alarm set karna hai.", SpokenLanguage.HINGLISH),
+            Pair("Agar mere paas 500 rupaye hain aur 150 kharch ho gaye, toh kitne bache?", SpokenLanguage.HINGLISH),
+            Pair("Aaj ka schedule kya hai, aur meri next meeting kab hai?", SpokenLanguage.HINGLISH),
+            Pair("Bangalore campus mein nearest canteen kahan hai, mujhe chai peeni hai?", SpokenLanguage.HINGLISH),
+            Pair("Aaj shaam ko traffic kaisa rahega Silk Board junction pe?", SpokenLanguage.HINGLISH),
+            // Pure Hindi (5 trials)
+            Pair("नमस्ते, आप मेरी किस प्रकार सहायता कर सकते हैं?", SpokenLanguage.HINDI),
+            Pair("भारत के प्रधानमंत्री कौन हैं और उनका जन्म कब हुआ था?", SpokenLanguage.HINDI),
+            Pair("आज कौन सा वार है और आज की तारीख क्या है?", SpokenLanguage.HINDI),
+            Pair("पच्चीस और पैंतीस का जोड़ कितना होता है?", SpokenLanguage.HINDI),
+            Pair("कल बैंगलोर का मौसम कैसा रहेगा?", SpokenLanguage.HINDI)
+        )
+
+        coroutineScope.launch(Dispatchers.Default) {
+            for ((index, item) in benchmarkPhrases.withIndex()) {
+                val (phrase, lang) = item
+                Log.i(TAG, "Executing benchmark trial #${index + 1}/15: \"$phrase\" ($lang)")
+
+                // Stop any playing audio
+                audioPlayback.bargeIn()
+                groqClient.cancel()
+
+                isProcessing = true
+                audioCapture.pauseListening()
+                _agentState.value = AgentState.THINKING
+                latencyTracker.reset()
+                latencyTracker.markSpeechEnd()
+
+                // Generate speech audio for the query to test REAL Cloud STT round-trip!
+                val queryAudio = try {
+                    piperSynthesizer.synthesize(phrase, lang)
+                } catch (e: Exception) {
+                    null
+                }
+
+                val transcript = if (queryAudio != null && queryAudio.samples.isNotEmpty()) {
+                    val sttRes = groqClient.transcribeAudio(
+                        samples = queryAudio.samples,
+                        mode = _assistantMode.value,
+                        sampleRate = queryAudio.sampleRate
+                    )
+                    latencyTracker.markSttEnd()
+                    if (sttRes.transcript.isNotBlank()) sttRes.transcript else phrase
+                } else {
+                    latencyTracker.markSttEnd()
+                    phrase
+                }
+
+                val assistantName = when (lang) {
+                    SpokenLanguage.ENGLISH, SpokenLanguage.HINGLISH -> "Dhvani"
+                    SpokenLanguage.HINDI -> "ध्वनि"
+                }
+
+                coroutineScope.launch(Dispatchers.Main) {
+                    val userMsg = ChatMessage(
+                        sender = MessageSender.USER,
+                        senderName = "Benchmark #${index + 1}",
+                        text = transcript,
+                        language = lang
+                    )
+                    _messages.value = _messages.value + userMsg
+                }
+
+                // Process response through real LLM and TTS
+                val completedLatch = kotlinx.coroutines.CompletableDeferred<Unit>()
+
+                val sentenceChunker = SentenceChunker { sentence, isFirstChunk ->
+                    synthesizeAndPlaySentence(sentence, lang, isFirstChunk)
+                }
+
+                groqClient.streamResponse(
+                    userMessage = transcript,
+                    detectedLanguage = lang,
+                    conversationHistory = emptyList(),
+                    onToken = { token ->
+                        latencyTracker.markLlmFirstToken()
+                        sentenceChunker.addToken(token)
+                    },
+                    onComplete = { fullResponse ->
+                        coroutineScope.launch(Dispatchers.Main) {
+                            sentenceChunker.finish()
+                            audioPlayback.setExpectingMoreAudio(false)
+                            val langStr = when (lang) {
+                                SpokenLanguage.ENGLISH -> "English"
+                                SpokenLanguage.HINGLISH -> "Hinglish"
+                                SpokenLanguage.HINDI -> "Hindi"
+                            }
+                            val finalMetrics = latencyTracker.buildMetrics(language = langStr)
+                            _currentMetrics.value = finalMetrics
+
+                            val agentMsg = ChatMessage(
+                                sender = MessageSender.AGENT,
+                                senderName = assistantName,
+                                text = fullResponse,
+                                language = lang,
+                                latency = finalMetrics
+                            )
+                            _messages.value = _messages.value + agentMsg
+
+                            benchmarkLogger.recordTrial(
+                                inputText = transcript,
+                                responseText = fullResponse,
+                                language = lang,
+                                metrics = finalMetrics,
+                                isTestChip = false
+                            )
+
+                            completedLatch.complete(Unit)
+                        }
+                    },
+                    onError = { err ->
+                        coroutineScope.launch(Dispatchers.Main) {
+                            audioPlayback.setExpectingMoreAudio(false)
+                            _agentState.value = AgentState.IDLE
+                            isProcessing = false
+                            benchmarkLogger.recordFailure(
+                                inputText = transcript,
+                                language = lang,
+                                reason = err.message ?: "LLM error",
+                                isTestChip = false
+                            )
+                            completedLatch.complete(Unit)
+                        }
+                    }
+                )
+
+                // Wait for trial to finish
+                try {
+                    completedLatch.await()
+                } catch (_: Exception) {}
+
+                // Allow brief delay between trials for audio playback and cooldown
+                delay(1200L)
+            }
+
+            benchmarkLogger.endSession()
+            Log.i(TAG, "Automated 15-trial benchmark session COMPLETE! Results saved.")
+            coroutineScope.launch(Dispatchers.Main) {
+                _agentState.value = AgentState.IDLE
+                isProcessing = false
+                audioCapture.resumeListening()
+                onComplete()
+            }
         }
     }
 

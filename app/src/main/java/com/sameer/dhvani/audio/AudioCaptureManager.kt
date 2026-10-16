@@ -42,6 +42,11 @@ class AudioCaptureManager(
     @Volatile private var wasSpeechDetected = false
     private var recordingThread: Thread? = null
 
+    // Ring buffer of recent pre-speech audio (~320ms @ 16kHz)
+    // Ensures leading syllables (e.g. "मुझे", "Agar", "150") are never clipped at speech onset.
+    private val preSpeechRingBuffer = java.util.ArrayDeque<FloatArray>(12)
+    private var preRollForCurrentUtterance: FloatArray? = null
+
     init {
         initVad()
     }
@@ -50,9 +55,9 @@ class AudioCaptureManager(
         try {
             val sileroConfig = SileroVadModelConfig(
                 model = "vad/silero_vad.onnx",
-                threshold = 0.5f,
-                minSilenceDuration = 0.8f,
-                minSpeechDuration = 0.25f,
+                threshold = 0.35f,
+                minSilenceDuration = 0.65f,
+                minSpeechDuration = 0.20f,
                 windowSize = 512,
                 maxSpeechDuration = 30.0f
             )
@@ -69,7 +74,7 @@ class AudioCaptureManager(
             synchronized(vadLock) {
                 vad = Vad(context.assets, vadModelConfig)
             }
-            Log.d(TAG, "Sherpa-ONNX Silero VAD initialized successfully (minSilenceDuration: 0.8s)")
+            Log.d(TAG, "Sherpa-ONNX Silero VAD initialized successfully (threshold: 0.35, minSilence: 0.65s, pre-speech ring buffer enabled)")
         } catch (e: Exception) {
             Log.e(TAG, "Failed to initialize Silero VAD", e)
         }
@@ -164,6 +169,7 @@ class AudioCaptureManager(
                     val rms = Math.sqrt(sumSquare / read).toFloat()
                     onAudioLevel(rms)
 
+                    val currentChunk = floatBuf.copyOf(read)
                     var speechStarted = false
                     val speechUtterances = mutableListOf<FloatArray>()
 
@@ -171,12 +177,29 @@ class AudioCaptureManager(
                         if (isPaused) return@synchronized
 
                         vad?.let { detector ->
-                            detector.acceptWaveform(floatBuf.copyOf(read))
+                            detector.acceptWaveform(currentChunk)
 
                             if (detector.isSpeechDetected()) {
                                 if (!wasSpeechDetected) {
                                     wasSpeechDetected = true
                                     speechStarted = true
+                                    // Capture the pre-speech audio frames accumulated right before speech trigger
+                                    val preRollTotal = preSpeechRingBuffer.sumOf { it.size }
+                                    if (preRollTotal > 0) {
+                                        val combinedPreRoll = FloatArray(preRollTotal)
+                                        var off = 0
+                                        for (chunk in preSpeechRingBuffer) {
+                                            System.arraycopy(chunk, 0, combinedPreRoll, off, chunk.size)
+                                            off += chunk.size
+                                        }
+                                        preRollForCurrentUtterance = combinedPreRoll
+                                    }
+                                }
+                            } else {
+                                // While no speech is detected, buffer incoming frames in a sliding window (~320ms)
+                                preSpeechRingBuffer.addLast(currentChunk)
+                                if (preSpeechRingBuffer.size > 10) {
+                                    preSpeechRingBuffer.removeFirst()
                                 }
                             }
 
@@ -188,8 +211,19 @@ class AudioCaptureManager(
                                 wasSpeechDetected = false
 
                                 if (speechSamples.isNotEmpty()) {
-                                    speechUtterances.add(speechSamples)
+                                    val preRoll = preRollForCurrentUtterance
+                                    val fullUtterance = if (preRoll != null && preRoll.isNotEmpty()) {
+                                        val merged = FloatArray(preRoll.size + speechSamples.size)
+                                        System.arraycopy(preRoll, 0, merged, 0, preRoll.size)
+                                        System.arraycopy(speechSamples, 0, merged, preRoll.size, speechSamples.size)
+                                        preRollForCurrentUtterance = null
+                                        merged
+                                    } else {
+                                        speechSamples
+                                    }
+                                    speechUtterances.add(fullUtterance)
                                 }
+                                preSpeechRingBuffer.clear()
                             }
                         }
                     }
@@ -218,6 +252,8 @@ class AudioCaptureManager(
         synchronized(vadLock) {
             vad?.reset()
             wasSpeechDetected = false
+            preSpeechRingBuffer.clear()
+            preRollForCurrentUtterance = null
         }
     }
 
@@ -231,6 +267,8 @@ class AudioCaptureManager(
             vad?.reset()
             wasSpeechDetected = false
             isPaused = false
+            preSpeechRingBuffer.clear()
+            preRollForCurrentUtterance = null
         }
     }
 

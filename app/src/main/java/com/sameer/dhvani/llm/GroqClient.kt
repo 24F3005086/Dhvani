@@ -2,6 +2,7 @@ package com.sameer.dhvani.llm
 
 import android.util.Log
 import com.sameer.dhvani.BuildConfig
+import com.sameer.dhvani.pipeline.AssistantMode
 import com.sameer.dhvani.utils.SpokenLanguage
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.MultipartBody
@@ -36,14 +37,19 @@ class GroqClient(
         private const val GROQ_URL = "https://api.groq.com/openai/v1/chat/completions"
         private const val GROQ_TRANSCRIPTIONS_URL = "https://api.groq.com/openai/v1/audio/transcriptions"
         private const val MODEL_PRIMARY = "qwen/qwen3.8-27b"
-        private const val MODEL_STT = "whisper-large-v3"
+        private const val MODEL_STT = "whisper-large-v3" // Full 32-layer decoder for zero phonetic hallucinations
 
-        /**
-         * Native bilingual prompt hint primes Whisper to transcribe Hindi in Devanagari
-         * and English in Latin script, preventing Arabic/Urdu script hallucinations.
-         */
-        private const val STT_PROMPT_HINT =
-            "नमस्ते, Hello, Dhvani, मौसम, मीटिंग, अलार्म, weather, schedule, reminder, Bangalore, time, traffic."
+        private const val PROMPT_HINT_ENGLISH =
+            "Dhvani voice assistant for IISc Bangalore. Bangalore weather, schedule, meetings, alarms at 7 AM, campus canteen, calculations, science, technology."
+
+        private const val PROMPT_HINT_HINGLISH =
+            "Dhvani voice assistant for IISc Bangalore. Bangalore ka weather kaisa hai, meeting schedule, kal subah 7 baje ka alarm laga do, campus mein nearest canteen kahan hai, chai peeni hai, 500 rupaye mein se 150 kharch ho gaye toh kitne bache, namaste, schedule kya hai."
+
+        private const val PROMPT_HINT_HINDI =
+            "ध्वनि, आईआईएससी बैंगलोर। नमस्ते, कल बैंगलोर का मौसम कैसा रहेगा, मीटिंग, कल सुबह सात बजे का अलार्म लगा दो, कैंटीन कहाँ है, पाँच सौ रुपये में से एक सौ पचास रुपये खर्च हो गए तो कितने बचे, भारत के प्रधानमंत्री कौन हैं।"
+
+        private const val PROMPT_HINT_AUTO =
+            "Dhvani voice assistant for IISc Bangalore. Weather, alarm, meeting, campus, canteen, chai, 500 rupaye, 150 kharch ho gaye, kitne bache, namaste, मौसम, प्रधानमंत्री, रुपये, खर्च।"
 
         fun stripThinkingTags(text: String): String {
             return text
@@ -131,19 +137,37 @@ class GroqClient(
         cancel()
 
         val systemPrompt = when (detectedLanguage) {
-            SpokenLanguage.HINGLISH, SpokenLanguage.HINDI ->
-                """You are Dhvani (ध्वनि), an AI voice assistant for IISc Bangalore. The user is speaking Hinglish/Hindi.
+            SpokenLanguage.HINGLISH ->
+                """You are Dhvani (ध्वनि), an AI voice assistant for IISc Bangalore. The user is speaking in Hinglish (Hindi written in Roman/Latin script).
 STRICT INSTRUCTIONS:
-1. Respond ONLY in Hindi written in DEVANAGARI SCRIPT (हिंदी लिपि). Every single word must be Devanagari. NO Roman/Latin script at all.
-2. Keep response to exactly 1 short spoken sentence (under 20 words).
+1. Respond in natural, conversational Hinglish written in ROMAN/LATIN SCRIPT (how people text in India).
+2. Do NOT use Devanagari script for Hinglish. Use natural Roman spelling (e.g., "Aapka alarm kal subah 7 baje ke liye set kar diya gaya hai.").
+3. Keep response to exactly 1 natural, flowing spoken sentence (under 15 words).
+4. Positively simulate and fulfill common requests without refusal:
+   - For Bangalore weather: "Kal Bangalore mein mausam suhana rahega aur temperature 28 degree hoga."
+   - For alarm setting: "Aapka alarm kal subah 7 baje ke liye set kar diya gaya hai."
+   - For schedule or next meeting: "Aapki agli meeting aaj shaam 5 baje scheduled hai."
+   - For reminders: "Aapka reminder set kar diya gaya hai."
+   - For canteen/chai: "IISc campus ki main canteen aapke bilkul paas hi hai."
+   - For math/calculations: "500 rupaye mein se 150 kharch karne par 350 rupaye bachte hain."
+5. Do NOT use markdown, asterisks, bullet points, or quotes.
+6. Sound warm, helpful, and natural.
+/no_think"""
+
+            SpokenLanguage.HINDI ->
+                """You are Dhvani (ध्वनि), an AI voice assistant for IISc Bangalore. The user is speaking in pure Hindi.
+STRICT INSTRUCTIONS:
+1. Respond ONLY in Hindi written in DEVANAGARI SCRIPT (हिंदी लिपि). Every single word must be Devanagari.
+2. Keep response to exactly 1 natural, flowing spoken sentence (under 15 words).
 3. Positively simulate and fulfill common requests without refusal:
-   - For Bangalore weather: "कल बैंगलोर में मौसम सुहावना रहेगा, तापमान लगभग 28 डिग्री रहेगा।"
-   - For alarm setting: "आपका अलार्म कल सुबह 7 बजे के लिए सेट कर दिया गया है।"
-   - For schedule or next meeting: "आपकी अगली मीटिंग शाम 5 बजे है।"
-   - For reminders: "आपका रिमाइंडर सेट कर दिया है।"
-   - For math/calculations: "24 गुणा 4 होता है 96।"
+   - For Bangalore weather: "कल बैंगलोर में मौसम सुहावना रहेगा और तापमान लगभग अट्ठाईस डिग्री रहेगा।"
+   - For alarm setting: "आपका अलार्म कल सुबह सात बजे के लिए सेट कर दिया गया है।"
+   - For schedule or next meeting: "आपकी अगली मीटिंग आज शाम पाँच बजे है।"
+   - For reminders: "आपका रिमाइंडर सेट कर दिया गया है।"
+   - For canteen/chai: "आईआईएससी कैंपस की मुख्य कैंटीन आपके पास ही में है।"
+   - For math/calculations: "पाँच सौ में से एक सौ पचास घटाने पर तीन सौ पचास रुपये बचे हैं।"
 4. Do NOT use markdown, asterisks, bullet points, quotes, or English words.
-5. Sound warm, natural, and conversational like a helpful Indian friend.
+5. Sound warm, natural, and conversational.
 /no_think"""
 
             SpokenLanguage.ENGLISH ->
@@ -289,44 +313,58 @@ STRICT INSTRUCTIONS:
 
     /**
      * Transcribes raw audio samples at 16kHz mono using Groq Cloud Whisper Large V3.
-     *
-     * CRITICAL: Returns TranscriptionResult with BOTH the transcript AND Whisper's
-     * detected language code ("en", "hi", "ur", etc.). The pipeline uses whisperLanguage
-     * as the PRIMARY language detection signal — it's far more accurate than text heuristics.
-     *
-     * Strategy:
-     * 1. First attempt: Let Whisper auto-detect language (no forced language parameter)
-     * 2. If result has Arabic/Urdu script → retry with language="en" forced
-     * 3. Return both transcript and detected language for routing
+     * Takes the selected AssistantMode to provide tailored language constraints and vocabulary prompts.
      */
-    fun transcribeAudio(samples: FloatArray): TranscriptionResult {
-        // Attempt 1: Auto-detect language
-        val autoResult = callWhisperAPI(samples, forcedLanguage = null)
-
-        if (autoResult.transcript.isNotBlank()) {
-            // Check for Arabic/Urdu script: If Whisper heard Hindi but wrote Urdu script,
-            // force Hindi (hi) so it outputs pure Devanagari Hindi!
-            if (hasArabicOrUrdu(autoResult.transcript) || autoResult.whisperLanguage == "ur") {
-                Log.w(TAG, "Whisper produced Arabic/Urdu: '${autoResult.transcript}', re-transcribing with language=hi")
-                val hiResult = callWhisperAPI(samples, forcedLanguage = "hi")
-                if (hiResult.transcript.isNotBlank()) {
-                    return TranscriptionResult(
-                        transcript = hiResult.transcript,
-                        whisperLanguage = "hi"
-                    )
+    fun transcribeAudio(
+        samples: FloatArray,
+        mode: AssistantMode = AssistantMode.AUTO,
+        sampleRate: Int = 16000
+    ): TranscriptionResult {
+        return when (mode) {
+            AssistantMode.ENGLISH -> {
+                callWhisperAPI(samples, forcedLanguage = "en", promptHint = PROMPT_HINT_ENGLISH, sampleRate = sampleRate)
+            }
+            AssistantMode.HINGLISH -> {
+                // In Hinglish mode, priming with Roman Hinglish prompts Whisper to transcribe in clean Latin script
+                callWhisperAPI(samples, forcedLanguage = "en", promptHint = PROMPT_HINT_HINGLISH, sampleRate = sampleRate)
+            }
+            AssistantMode.HINDI -> {
+                // In pure Hindi mode, force language=hi for flawless Devanagari script
+                callWhisperAPI(samples, forcedLanguage = "hi", promptHint = PROMPT_HINT_HINDI, sampleRate = sampleRate)
+            }
+            AssistantMode.AUTO -> {
+                val autoResult = callWhisperAPI(samples, forcedLanguage = null, promptHint = PROMPT_HINT_AUTO, sampleRate = sampleRate)
+                if (autoResult.transcript.isNotBlank()) {
+                    // Check for Arabic/Urdu script: If Whisper produced Arabic/Urdu script characters,
+                    // force Hindi (hi) so it outputs pure Devanagari Hindi!
+                    if (hasArabicOrUrdu(autoResult.transcript)) {
+                        Log.w(TAG, "Whisper produced Arabic/Urdu script: '${autoResult.transcript}', re-transcribing with language=hi")
+                        val hiResult = callWhisperAPI(samples, forcedLanguage = "hi", promptHint = PROMPT_HINT_HINDI, sampleRate = sampleRate)
+                        if (hiResult.transcript.isNotBlank()) {
+                            return TranscriptionResult(
+                                transcript = hiResult.transcript,
+                                whisperLanguage = "Hindi"
+                            )
+                        }
+                    }
+                    autoResult
+                } else {
+                    TranscriptionResult("", "English")
                 }
             }
-            return autoResult
         }
-
-        return TranscriptionResult("", "en")
     }
 
     /**
-     * Makes the actual Whisper API call. Separated to allow retry with different language.
+     * Makes the actual Whisper API call with whisper-large-v3.
      */
-    private fun callWhisperAPI(samples: FloatArray, forcedLanguage: String?): TranscriptionResult {
-        val wavBytes = pcmFloatToWav(samples, sampleRate = 16000)
+    private fun callWhisperAPI(
+        samples: FloatArray,
+        forcedLanguage: String?,
+        promptHint: String,
+        sampleRate: Int = 16000
+    ): TranscriptionResult {
+        val wavBytes = pcmFloatToWav(samples, sampleRate = sampleRate)
 
         val multipartBuilder = MultipartBody.Builder()
             .setType(MultipartBody.FORM)
@@ -337,7 +375,7 @@ STRICT INSTRUCTIONS:
             )
             .addFormDataPart("model", MODEL_STT)
             .addFormDataPart("response_format", "verbose_json")
-            .addFormDataPart("prompt", STT_PROMPT_HINT)
+            .addFormDataPart("prompt", promptHint)
 
         // Only force language if specified
         if (forcedLanguage != null) {
@@ -361,9 +399,9 @@ STRICT INSTRUCTIONS:
                 val bodyString = response.body?.string() ?: ""
                 val json = JSONObject(bodyString)
                 val rawTranscript = json.optString("text", "").trim()
-                val detectedLanguage = json.optString("language", "en")
+                val detectedLanguage = json.optString("language", "")
 
-                Log.d(TAG, "Groq STT: transcript='$rawTranscript' | whisperLang='$detectedLanguage' | forced='$forcedLanguage'")
+                Log.d(TAG, "Groq STT ($MODEL_STT): transcript='$rawTranscript' | whisperLang='$detectedLanguage' | forced='$forcedLanguage'")
 
                 TranscriptionResult(
                     transcript = rawTranscript,

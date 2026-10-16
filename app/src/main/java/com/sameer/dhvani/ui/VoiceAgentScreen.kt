@@ -312,6 +312,7 @@ fun VoiceAgentScreen(
             ) {
                 ModernTelemetryDrawer(
                     metrics = metrics,
+                    pipeline = pipeline,
                     isDarkMode = isDarkMode,
                     onClose = { showTelemetryDrawer = false }
                 )
@@ -379,11 +380,13 @@ fun VoiceAgentScreen(
                 }
 
                 val promptSparks = listOf(
-                    "🌤️ Bangalore weather tomorrow" to "What is the weather forecast for Bangalore tomorrow?",
-                    "⏰ 7 baje ka alarm laga do" to "Mujhe kal subah 7 baje ka alarm set karna hai.",
-                    "🧮 24 multiplied by 4" to "What is 24 multiplied by 4?",
-                    "🏛️ IISc campus canteen" to "Campus mein nearest canteen kahan hai, mujhe chai peeni hai?",
-                    "💡 Healthy sleep tip" to "Give me a one-sentence tip for healthy sleep."
+                    "🌤️ Bangalore weather" to "What is the weather forecast for Bangalore tomorrow?",
+                    "⏰ 7 baje alarm (Hinglish)" to "Mujhe kal subah 7 baje ka alarm set karna hai.",
+                    "💰 500 me se 150 (Hinglish)" to "Agar mere paas 500 rupaye hain aur 150 kharch ho gaye, toh kitne bache?",
+                    "🏛️ Campus canteen (Hinglish)" to "Campus mein nearest canteen kahan hai, mujhe chai peeni hai?",
+                    "🇮🇳 Pradhan Mantri (Hindi)" to "भारत के वर्तमान प्रधानमंत्री कौन हैं?",
+                    "⛅ मौसम कैसा रहेगा (Hindi)" to "कल बैंगलोर का मौसम कैसा रहेगा?",
+                    "🧮 24 × 4 (English)" to "What is 24 multiplied by 4?"
                 )
 
                 LazyRow(
@@ -460,9 +463,10 @@ fun FluidModeSelector(
         horizontalArrangement = Arrangement.SpaceBetween
     ) {
         val modes = listOf(
-            Triple(AssistantMode.AUTO, "Auto Detect", "✦"),
+            Triple(AssistantMode.AUTO, "Auto", "✦"),
             Triple(AssistantMode.ENGLISH, "English", "EN"),
-            Triple(AssistantMode.HINGLISH, "Hinglish", "HI")
+            Triple(AssistantMode.HINGLISH, "Hinglish", "HI"),
+            Triple(AssistantMode.HINDI, "Hindi", "हिंदी")
         )
 
         modes.forEach { (mode, label, symbol) ->
@@ -507,6 +511,7 @@ fun FluidModeSelector(
 @Composable
 fun ModernTelemetryDrawer(
     metrics: LatencyMetrics,
+    pipeline: VoiceAgentPipeline,
     isDarkMode: Boolean,
     onClose: () -> Unit
 ) {
@@ -605,6 +610,65 @@ fun ModernTelemetryDrawer(
                 ModernMetricTile("RAM", "${metrics.ramUsageMb} MB", "Snapdragon", isDarkMode)
                 ModernMetricTile("DUPLEX", "Active", "Echo Guard", isDarkMode)
             }
+
+            Spacer(modifier = Modifier.height(10.dp))
+            HorizontalDivider(
+                color = if (isDarkMode) Color(0x1AFFFFFF) else Color(0x0F000000),
+                thickness = 1.dp
+            )
+            Spacer(modifier = Modifier.height(10.dp))
+
+            // Benchmark Suite Row
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column {
+                    Text(
+                        text = "15-TRIAL BENCHMARK SUITE",
+                        fontSize = 9.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = textSub,
+                        letterSpacing = 0.5.sp
+                    )
+                    Spacer(modifier = Modifier.height(2.dp))
+                    Text(
+                        text = "Recorded: ${pipeline.benchmarkLogger.trialCount}/15 trials",
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        color = if (pipeline.benchmarkLogger.trialCount >= 15) GreenLive else textMain
+                    )
+                }
+
+                Surface(
+                    onClick = {
+                        onClose()
+                        pipeline.runAutomatedBenchmark()
+                    },
+                    shape = RoundedCornerShape(12.dp),
+                    color = IndigoElectric
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Speed,
+                            contentDescription = null,
+                            tint = Color.White,
+                            modifier = Modifier.size(13.dp)
+                        )
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text(
+                            text = "Run 15 Trials",
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = Color.White
+                        )
+                    }
+                }
+            }
         }
     }
 }
@@ -645,6 +709,7 @@ fun ModernChatBubble(
     val agentBg = if (isDarkMode) Color(0xFF151C2C) else Color(0xFFFFFFFF)
     val agentBorder = if (isDarkMode) Color(0x22FFFFFF) else Color(0x0D000000)
     val textMain = if (isDarkMode) DarkTextMain else LightTextMain
+    val textSub = if (isDarkMode) DarkTextSub else LightTextSub
 
     Column(
         modifier = Modifier.fillMaxWidth(),

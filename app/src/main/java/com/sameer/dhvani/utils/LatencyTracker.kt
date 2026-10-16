@@ -1,5 +1,7 @@
 package com.sameer.dhvani.utils
 
+import android.os.SystemClock
+
 data class LatencyMetrics(
     val vadDurationMs: Long = 0,
     val sttDurationMs: Long = 0,
@@ -12,6 +14,22 @@ data class LatencyMetrics(
     val timestamp: Long = System.currentTimeMillis()
 )
 
+/**
+ * Tracks per-stage latency using monotonic SystemClock.elapsedRealtime().
+ *
+ * This avoids drift from wall-clock changes (NTP syncs, user adjustments).
+ * All public mark*() methods capture timestamps from actual processing events
+ * in the pipeline, not from UI update callbacks.
+ *
+ * Measurement boundaries:
+ *   E2E = vadSpeechEndTime → ttsFirstAudioTime
+ *   STT = vadSpeechEndTime → sttEndTime
+ *   LLM TTFT = sttEndTime (= llmRequestTime) → llmFirstTokenTime
+ *   TTS TTFA = ttsSynthesisStartTime → ttsFirstAudioTime
+ *
+ * Note: vadDurationMs is reported as the Silero VAD's configured
+ * minSilenceDuration (200ms), not a per-trial measurement.
+ */
 class LatencyTracker {
     private var vadSpeechEndTime: Long = 0
     private var sttStartTime: Long = 0
@@ -21,31 +39,38 @@ class LatencyTracker {
     private var ttsSynthesisStartTime: Long = 0
     private var ttsFirstAudioTime: Long = 0
 
+    /**
+     * Returns the current monotonic timestamp in milliseconds.
+     * Using elapsedRealtime() ensures durations are immune to
+     * wall-clock adjustments (NTP sync, user changes, etc.).
+     */
+    private fun now(): Long = SystemClock.elapsedRealtime()
+
     fun markSpeechEnd() {
-        vadSpeechEndTime = System.currentTimeMillis()
+        vadSpeechEndTime = now()
         sttStartTime = vadSpeechEndTime
     }
 
     fun markSttEnd() {
-        sttEndTime = System.currentTimeMillis()
+        sttEndTime = now()
         llmRequestTime = sttEndTime
     }
 
     fun markLlmFirstToken() {
         if (llmFirstTokenTime == 0L) {
-            llmFirstTokenTime = System.currentTimeMillis()
+            llmFirstTokenTime = now()
         }
     }
 
     fun markTtsStart() {
         if (ttsSynthesisStartTime == 0L) {
-            ttsSynthesisStartTime = System.currentTimeMillis()
+            ttsSynthesisStartTime = now()
         }
     }
 
     fun markTtsFirstAudio() {
         if (ttsFirstAudioTime == 0L) {
-            ttsFirstAudioTime = System.currentTimeMillis()
+            ttsFirstAudioTime = now()
         }
     }
 

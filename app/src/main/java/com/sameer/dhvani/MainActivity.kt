@@ -69,6 +69,27 @@ class MainActivity : ComponentActivity() {
                 }
             }
         }
+
+        handleBenchmarkIntent(intent)
+    }
+
+    override fun onNewIntent(intent: android.content.Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        handleBenchmarkIntent(intent)
+    }
+
+    private fun handleBenchmarkIntent(intent: android.content.Intent?) {
+        val action = intent?.getStringExtra("action") ?: intent?.action
+        if (action == "benchmark" || action == "com.sameer.dhvani.RUN_BENCHMARK") {
+            android.util.Log.i("MainActivity", "Received benchmark trigger intent, launching benchmark suite...")
+            pipeline?.runAutomatedBenchmark()
+        }
+        val utterance = intent?.getStringExtra("test_utterance") ?: intent?.getStringExtra("phrase")
+        if (!utterance.isNullOrBlank()) {
+            android.util.Log.i("MainActivity", "Received test utterance intent: '$utterance'")
+            pipeline?.testUtterance(utterance)
+        }
     }
 
     override fun onDestroy() {

@@ -41,12 +41,43 @@ class PiperSynthesizer(private val context: Context) {
             "mere" to "मेरे", "aap" to "आप", "aapka" to "आपका", "aapki" to "आपकी",
             "aapke" to "आपके", "tum" to "तुम", "aaj" to "आज", "kal" to "कल",
             "subah" to "सुबह", "shaam" to "शाम", "raat" to "रात", "baje" to "बजे",
-            "karo" to "करो", "karna" to "करना", "batao" to "बताओ", "bolo" to "बोलो",
+            "kar" to "कर", "karo" to "करो", "karna" to "करना", "karne" to "करने",
+            "batao" to "बताओ", "bataiye" to "बताइए", "bolo" to "बोलो",
             "set" to "सेट", "alarm" to "अलार्म", "meeting" to "मीटिंग", "schedule" to "शेड्यूल",
-            "weather" to "मौसम", "reminder" to "रिमाइंडर", "bilkul" to "बिल्कुल",
-            "theek" to "ठीक", "thik" to "ठीक", "accha" to "अच्छा", "achha" to "अच्छा",
-            "dhanyavaad" to "धन्यवाद", "shukriya" to "शुक्रिया", "gaya" to "गया",
-            "gayi" to "गयी", "diya" to "दिया", "liye" to "लिए", "next" to "नेक्स्ट"
+            "scheduled" to "शेड्यूल", "weather" to "मौसम", "reminder" to "रिमाइंडर",
+            "bilkul" to "बिल्कुल", "theek" to "ठीक", "thik" to "ठीक", "accha" to "अच्छा",
+            "achha" to "अच्छा", "dhanyavaad" to "धन्यवाद", "shukriya" to "शुक्रिया",
+            "gaya" to "गया", "gayi" to "गयी", "diya" to "दिया", "liye" to "लिए",
+            "next" to "नेक्स्ट", "canteen" to "कैंटीन", "campus" to "कैंपस", "chai" to "चाय",
+            "peeni" to "पीनी", "paas" to "पास", "traffic" to "ट्रैफिक", "degree" to "डिग्री",
+            "temperature" to "तापमान", "celsius" to "सेल्सियस", "iisc" to "आईआईएससी",
+            "bangalore" to "बैंगलोर", "time" to "टाइम", "office" to "ऑफिस", "help" to "मदद",
+            "madad" to "मदद", "doctor" to "डॉक्टर", "lab" to "लैब", "forecast" to "पूर्वानुमान",
+            "wahi" to "वहीं", "jaaiye" to "जाइए", "main" to "मेन", "bache" to "बचे",
+            "bachte" to "बचते", "rupaye" to "रुपये", "rupees" to "रुपये", "ghatane" to "घटाने",
+            "kharch" to "खर्च", "suhana" to "सुहावना", "suhavana" to "सुहावना",
+            "rahega" to "रहेगा", "rahegi" to "रहेगी", "hoga" to "होगा", "hogi" to "होगी",
+            "hi" to "ही", "bhi" to "भी", "toh" to "तो", "to" to "तो", "agar" to "अगर",
+            "kitne" to "कितने", "kitna" to "कितना", "kitni" to "कितनी", "chahiye" to "चाहिए"
+        )
+
+        private val CONSONANT_MAP = mapOf(
+            "bh" to "भ", "ch" to "च", "chh" to "छ", "dh" to "ध", "gh" to "घ",
+            "jh" to "झ", "kh" to "ख", "ph" to "फ", "sh" to "श", "th" to "थ",
+            "k" to "क", "g" to "ग", "j" to "ज", "t" to "त", "d" to "द",
+            "n" to "न", "p" to "प", "b" to "ब", "m" to "म", "y" to "य",
+            "r" to "र", "l" to "ल", "v" to "व", "w" to "व", "s" to "स",
+            "h" to "ह", "f" to "फ", "z" to "ज़"
+        )
+
+        private val VOWEL_MATRA_MAP = mapOf(
+            "aa" to "ा", "ee" to "ी", "oo" to "ू", "ai" to "ै", "au" to "ौ",
+            "a" to "", "i" to "ि", "u" to "ु", "e" to "े", "o" to "ो"
+        )
+
+        private val INITIAL_VOWEL_MAP = mapOf(
+            "aa" to "आ", "ee" to "ई", "oo" to "ऊ", "ai" to "ऐ", "au" to "औ",
+            "a" to "अ", "i" to "इ", "u" to "उ", "e" to "ए", "o" to "ओ"
         )
 
         fun hasDevanagari(text: String): Boolean = text.any { it.code in 0x0900..0x097F }
@@ -58,15 +89,70 @@ class PiperSynthesizer(private val context: Context) {
                 .trim()
         }
 
+        private fun phoneticTransliterateWord(word: String): String {
+            val w = word.lowercase()
+            val sb = java.lang.StringBuilder()
+            var i = 0
+            var isStart = true
+
+            while (i < w.length) {
+                // Match initial independent vowels
+                if (isStart && i + 2 <= w.length && INITIAL_VOWEL_MAP.containsKey(w.substring(i, i + 2))) {
+                    sb.append(INITIAL_VOWEL_MAP[w.substring(i, i + 2)])
+                    i += 2
+                    isStart = false
+                    continue
+                }
+                if (isStart && INITIAL_VOWEL_MAP.containsKey(w.substring(i, i + 1))) {
+                    sb.append(INITIAL_VOWEL_MAP[w.substring(i, i + 1)])
+                    i += 1
+                    isStart = false
+                    continue
+                }
+
+                // Match consonants
+                var cMatched: String? = null
+                if (i + 2 <= w.length && CONSONANT_MAP.containsKey(w.substring(i, i + 2))) {
+                    cMatched = CONSONANT_MAP[w.substring(i, i + 2)]
+                    i += 2
+                } else if (CONSONANT_MAP.containsKey(w.substring(i, i + 1))) {
+                    cMatched = CONSONANT_MAP[w.substring(i, i + 1)]
+                    i += 1
+                }
+
+                if (cMatched != null) {
+                    sb.append(cMatched)
+                    isStart = false
+                    // Lookahead for following vowel matra
+                    if (i + 2 <= w.length && VOWEL_MATRA_MAP.containsKey(w.substring(i, i + 2))) {
+                        sb.append(VOWEL_MATRA_MAP[w.substring(i, i + 2)])
+                        i += 2
+                    } else if (i < w.length && VOWEL_MATRA_MAP.containsKey(w.substring(i, i + 1))) {
+                        sb.append(VOWEL_MATRA_MAP[w.substring(i, i + 1)])
+                        i += 1
+                    }
+                } else {
+                    sb.append(w[i])
+                    i += 1
+                    isStart = false
+                }
+            }
+            return sb.toString()
+        }
+
         fun fallbackRomanToDevanagari(text: String): String {
             val words = text.split(" ")
             return words.joinToString(" ") { word ->
                 val cleanWord = word.lowercase().trim { !it.isLetterOrDigit() }
                 val dev = COMMON_HINGLISH_WORDS[cleanWord]
+                val lead = word.takeWhile { !it.isLetterOrDigit() }
+                val trail = word.takeLastWhile { !it.isLetterOrDigit() }
+
                 if (dev != null) {
-                    val lead = word.takeWhile { !it.isLetterOrDigit() }
-                    val trail = word.takeLastWhile { !it.isLetterOrDigit() }
                     "$lead$dev$trail"
+                } else if (cleanWord.all { it in 'a'..'z' } && cleanWord.length >= 2) {
+                    val transliterated = phoneticTransliterateWord(cleanWord)
+                    "$lead$transliterated$trail"
                 } else {
                     word
                 }
@@ -234,7 +320,7 @@ class PiperSynthesizer(private val context: Context) {
      *   Fallbacks: Piper Rohan VITS, Android Google Neural Male voice.
      *   Numbers like 5 and 7 are fully normalized to Devanagari words (पाँच, सात) so pronunciation is flawless.
      */
-    fun synthesize(rawText: String, detectedLanguage: SpokenLanguage): GeneratedAudio? {
+    fun synthesize(rawText: String, detectedLanguage: SpokenLanguage, isFirstChunk: Boolean = false): GeneratedAudio? {
         val text = cleanTextForSpeech(rawText)
         if (text.isBlank()) return null
 
@@ -246,23 +332,41 @@ class PiperSynthesizer(private val context: Context) {
                 // 1. Text normalization: Convert Romanized Hinglish and expand all digits (5 -> पाँच, 7 -> सात, 5 PM -> शाम पाँच बजे)
                 val baseDevanagari = if (isDevanagari) text else fallbackRomanToDevanagari(text)
                 val normalizedHindi = NumberNormalizer.normalizeForHindi(baseDevanagari)
-                Log.d(TAG, "Speaking Hindi: original='$text' -> normalized='$normalizedHindi'")
 
-                // 1. Primary: Supertonic 3 Hindi (sherpa-onnx Flow-Matching Diffusion, numSteps=5, speed=1.0f, 4 threads)
+                // If text has NO Devanagari characters at all, it's an English sentence — speak with English voice!
+                if (!hasDevanagari(normalizedHindi)) {
+                    val normalizedEnglish = NumberNormalizer.normalizeForEnglish(text)
+                    Log.d(TAG, "No Devanagari characters found, routing to English TTS: '$normalizedEnglish'")
+                    return synchronized(englishLock) {
+                        englishTts?.generate(normalizedEnglish, sid = 0, speed = 1.0f)
+                    }
+                }
+
+                // Ensure Hindi text has terminal punctuation for clean prosodic cadence closure
+                val textWithPunctuation = if (!normalizedHindi.endsWith("।") && !normalizedHindi.endsWith(".") && !normalizedHindi.endsWith("?") && !normalizedHindi.endsWith("!")) {
+                    "$normalizedHindi।"
+                } else {
+                    normalizedHindi
+                }
+
+                val steps = 5
+                Log.d(TAG, "Speaking Hindi (isFirstChunk=$isFirstChunk, steps=$steps): original='$text' -> normalized='$textWithPunctuation'")
+
+                // 1. Primary: Supertonic 3 Hindi (sherpa-onnx Flow-Matching Diffusion, numSteps=5, speed=0.95f for crystal-clear articulation)
                 val supertonicAudio = try {
                     if (supertonicTts != null) {
-                        Log.d(TAG, "Synthesizing with Supertonic 3 Hindi (numSteps=5, speed=1.0f, 4 threads)...")
+                        Log.d(TAG, "Synthesizing with Supertonic 3 Hindi (numSteps=5, speed=0.95f, 4 threads)...")
                         val genConfig = GenerationConfig(
                             sid = 0,
-                            numSteps = 5,
-                            speed = 1.0f,
+                            numSteps = steps,
+                            speed = 0.95f,
                             extra = mapOf("lang" to "hi")
                         )
                         val audio = synchronized(supertonicLock) {
-                            supertonicTts?.generateWithConfig(normalizedHindi, genConfig)
+                            supertonicTts?.generateWithConfig(textWithPunctuation, genConfig)
                         }
                         if (audio != null && audio.samples.isNotEmpty()) {
-                            Log.d(TAG, "Supertonic 3 generated ${audio.samples.size} samples @ ${audio.sampleRate}Hz")
+                            Log.d(TAG, "Supertonic 3 generated ${audio.samples.size} samples @ ${audio.sampleRate}Hz (steps=$steps)")
                             audio
                         } else null
                     } else null
@@ -277,7 +381,7 @@ class PiperSynthesizer(private val context: Context) {
 
                 // 2. Fallback: Piper Rohan VITS (Single-pass on-device, ~180ms)
                 val rohanAudio = synchronized(hindiLock) {
-                    hindiTts?.generate(normalizedHindi, sid = 0, speed = 1.0f)
+                    hindiTts?.generate(textWithPunctuation, sid = 0, speed = 1.0f)
                 }
                 if (rohanAudio != null && rohanAudio.samples.isNotEmpty()) {
                     Log.d(TAG, "Piper Rohan fallback generated ${rohanAudio.samples.size} samples @ ${rohanAudio.sampleRate}Hz")
@@ -285,8 +389,8 @@ class PiperSynthesizer(private val context: Context) {
                 }
 
                 // 3. Fallback: Android Google Neural Voice (hi-in-x-hid-local)
-                val maleAudio = if (androidTtsReady && hasDevanagari(normalizedHindi)) {
-                    synthesizeWithMaleTts(normalizedHindi)
+                val maleAudio = if (androidTtsReady && hasDevanagari(textWithPunctuation)) {
+                    synthesizeWithMaleTts(textWithPunctuation)
                 } else null
                 return maleAudio
             } else {
