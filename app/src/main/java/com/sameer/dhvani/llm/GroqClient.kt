@@ -39,11 +39,11 @@ class GroqClient(
         private const val MODEL_STT = "whisper-large-v3"
 
         /**
-         * Neutral bilingual prompt hint helps Whisper transcribe Indian accents
-         * without biasing the language detection token distribution towards Hindi.
+         * Native bilingual prompt hint primes Whisper to transcribe Hindi in Devanagari
+         * and English in Latin script, preventing Arabic/Urdu script hallucinations.
          */
         private const val STT_PROMPT_HINT =
-            "Bilingual English and Hindi voice conversation with an AI assistant."
+            "नमस्ते, Hello, Dhvani, मौसम, मीटिंग, अलार्म, weather, schedule, reminder, Bangalore, time, traffic."
 
         fun stripThinkingTags(text: String): String {
             return text
@@ -141,6 +141,7 @@ STRICT INSTRUCTIONS:
    - For alarm setting: "आपका अलार्म कल सुबह 7 बजे के लिए सेट कर दिया गया है।"
    - For schedule or next meeting: "आपकी अगली मीटिंग शाम 5 बजे है।"
    - For reminders: "आपका रिमाइंडर सेट कर दिया है।"
+   - For math/calculations: "24 गुणा 4 होता है 96।"
 4. Do NOT use markdown, asterisks, bullet points, quotes, or English words.
 5. Sound warm, natural, and conversational like a helpful Indian friend.
 /no_think"""
@@ -155,6 +156,7 @@ STRICT INSTRUCTIONS:
    - For alarm setting: "Sure, your alarm for 7 AM tomorrow has been set."
    - For reminders: "Got it, your reminder for the 5 PM meeting is set."
    - For schedule: "Your next meeting is scheduled for 5 PM today."
+   - For math/calculations: "24 multiplied by 4 is 96."
 4. Do NOT use markdown, asterisks, bullet points, or quotes.
 /no_think"""
         }
@@ -302,16 +304,15 @@ STRICT INSTRUCTIONS:
         val autoResult = callWhisperAPI(samples, forcedLanguage = null)
 
         if (autoResult.transcript.isNotBlank()) {
-            // Check for Arabic/Urdu hallucination
-            if (hasArabicOrUrdu(autoResult.transcript)) {
-                Log.w(TAG, "Auto-detect produced Arabic/Urdu: '${autoResult.transcript}', retrying with language=en")
-                // Attempt 2: Force English transcription (romanizes Hindi words)
-                val enResult = callWhisperAPI(samples, forcedLanguage = "en")
-                if (enResult.transcript.isNotBlank()) {
-                    // We know it was Hindi speech but forced English romanization
+            // Check for Arabic/Urdu script: If Whisper heard Hindi but wrote Urdu script,
+            // force Hindi (hi) so it outputs pure Devanagari Hindi!
+            if (hasArabicOrUrdu(autoResult.transcript) || autoResult.whisperLanguage == "ur") {
+                Log.w(TAG, "Whisper produced Arabic/Urdu: '${autoResult.transcript}', re-transcribing with language=hi")
+                val hiResult = callWhisperAPI(samples, forcedLanguage = "hi")
+                if (hiResult.transcript.isNotBlank()) {
                     return TranscriptionResult(
-                        transcript = enResult.transcript,
-                        whisperLanguage = "hi" // We know it was Hindi that got Urdu hallucination
+                        transcript = hiResult.transcript,
+                        whisperLanguage = "hi"
                     )
                 }
             }

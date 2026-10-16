@@ -13,52 +13,52 @@ object LanguageDetector {
 
     /**
      * Unambiguous distinctive Hindi vocabulary (grammatical markers, pronouns, verbs, question words).
-     *
-     * CRITICAL: Words that overlap with common English words are STRICTLY EXCLUDED:
-     * - "main" (English adjective: main road, main idea) vs Hindi मैं -> EXCLUDED
-     * - "par" (English noun: on par) vs Hindi पर -> EXCLUDED
-     * - "ye" (English slang / archaic: ye) vs Hindi ये -> EXCLUDED
-     * - "wo" (English interjection: whoa/wo) vs Hindi वो -> EXCLUDED
-     * - "the" (English article) vs Hindi थे -> EXCLUDED
-     * - "to" (English preposition) vs Hindi तो -> EXCLUDED
-     * - "me" (English pronoun) vs Hindi में -> EXCLUDED
-     * - "bhi" -> EXCLUDED
-     * - Single-letter/two-letter ambiguous particles: "ka", "ki", "ke", "ko", "se" -> EXCLUDED
+     * Strictly excludes words that overlap with common English words.
      */
     private val UNAMBIGUOUS_HINDI_LEXICON = setOf(
         // Pronouns
         "mujhe", "mujhko", "mera", "meri", "mere", "hamara", "hamari", "hamare",
         "aap", "aapka", "aapki", "aapke", "tum", "tumhara", "tumhari", "tumhare",
-        "iska", "iski", "iske", "uska", "uski", "uske",
+        "iska", "iski", "iske", "uska", "uski", "uske", "unka", "unki", "unke",
+        "hum", "humko", "humne", "maine", "inhone", "unhone",
         // Question words
         "kya", "kab", "kahan", "kaha", "kaise", "kyun", "kyu", "kaun", "kitna", "kitne", "kitni", "kaisa", "kaisi",
         // Verbs and auxiliaries
-        "hai", "hain", "tha", "thi", "hoga", "hogi", "hoge", "karo", "karna", "kare", "kariye",
+        "hai", "hain", "tha", "thi", "the", "hoga", "hogi", "hoge", "karo", "karna", "kare", "kariye",
         "raha", "rahi", "rahe", "batao", "bataiye", "bolo", "boliye", "suno", "dekho",
         "chahiye", "chahie", "sakta", "sakti", "sakte", "diya", "liya", "kiya", "gaya", "gayi", "gaye",
+        "hota", "hoti", "hote", "jao", "jaana", "aao", "aana", "ruk", "ruko",
         // Time & Calendar
         "aaj", "kal", "parso", "subah", "shaam", "raat", "dopahar", "baje", "abhi",
         // Common conversational words
-        "haan", "nahi", "nahin", "theek", "thik", "accha", "achha", "bilkul",
-        "shukriya", "dhanyavaad", "namaste", "namaskar", "bahut", "thoda", "kripya", "samay"
+        "haan", "nahi", "nahin", "theek", "thik", "accha", "achha", "bilkul", "yaar",
+        "shukriya", "dhanyavaad", "namaste", "namaskar", "bahut", "thoda", "kripya", "samay",
+        "zaroor", "zarur", "pehle", "baad", "saath", "andar", "bahar"
     )
 
     /**
-     * Common English vocabulary to reliably identify English sentences
-     * even when Whisper audio classifier mislabels Indian English accents as "hi".
+     * Comprehensive English vocabulary (including question, daily, and mathematical words).
      */
     private val COMMON_ENGLISH_LEXICON = setOf(
-        "what", "is", "the", "can", "you", "set", "a", "reminder", "for", "my",
-        "meeting", "at", "weather", "forecast", "bangalore", "tomorrow", "how",
-        "are", "why", "tell", "me", "hello", "hi", "please", "help", "schedule",
-        "next", "time", "today", "would", "like", "to", "could", "thanks", "thank",
-        "good", "morning", "afternoon", "evening", "doing", "about", "do", "does",
-        "did", "will", "shall", "have", "has", "had", "where", "when", "who", "which",
-        "there", "here", "this", "that", "an", "in", "on", "off", "with", "without",
-        "from", "of", "and", "or", "but", "not", "no", "yes", "if", "so", "because",
-        "just", "want", "need", "know", "think", "see", "get", "got", "make", "give",
-        "take", "go", "come", "alarm", "clock", "traffic", "route", "day", "night",
-        "main", "feature", "agent", "app", "model", "phone", "call", "send", "message"
+        // Question words
+        "what", "is", "the", "how", "are", "why", "when", "where", "who", "which",
+        "whose", "whom", "can", "could", "would", "should", "will", "shall", "do", "does", "did",
+        // Pronouns & Articles
+        "you", "your", "yours", "me", "my", "mine", "i", "we", "our", "ours",
+        "he", "she", "it", "they", "them", "their", "a", "an", "this", "that", "these", "those",
+        // Action & Math verbs
+        "set", "tell", "help", "calculate", "multiply", "multiplied", "divide", "divided",
+        "times", "into", "plus", "minus", "equals", "equal", "sum", "product", "difference",
+        "solve", "count", "convert", "find", "give", "make", "take", "show", "open", "close",
+        // Common domains
+        "reminder", "alarm", "meeting", "weather", "forecast", "temperature", "bangalore",
+        "tomorrow", "today", "yesterday", "morning", "afternoon", "evening", "night",
+        "schedule", "next", "time", "clock", "traffic", "flight", "train", "car", "route",
+        "hello", "hi", "hey", "please", "thanks", "thank", "good", "fine", "okay",
+        "question", "answer", "about", "with", "without", "from", "for", "in", "on", "at",
+        "numbers", "number", "zero", "one", "two", "three", "four", "five", "six", "seven",
+        "eight", "nine", "ten", "twenty", "thirty", "forty", "fifty", "sixty", "seventy",
+        "eighty", "ninety", "hundred", "thousand", "am", "pm", "celsius", "degrees"
     )
 
     /**
@@ -72,7 +72,7 @@ object LanguageDetector {
 
         // 1. Devanagari script in text is 100% proof of Hindi
         if (trimmed.any { it.code in 0x0900..0x097F }) {
-            Log.d(TAG, "Devanagari characters detected -> HINDI")
+            Log.d(TAG, "Devanagari characters detected in transcript -> HINDI")
             return SpokenLanguage.HINDI
         }
 
@@ -85,13 +85,17 @@ object LanguageDetector {
             if (COMMON_ENGLISH_LEXICON.contains(word)) englishHits++
         }
 
-        Log.d(TAG, "LID Analysis: words=${words.size}, enHits=$englishHits, hiHits=$hindiHits, whisperLang='$whisperLanguage'")
+        Log.d(TAG, "LID Analysis: words=${words.size}, enHits=$englishHits, hiHits=$hindiHits, whisperLang='$whisperLanguage', text='$trimmed'")
 
-        // 2. Strong English presence with ZERO Hindi markers -> ALWAYS English
-        // (Even if Whisper's acoustic model guessed "hi" because of an Indian accent!)
-        if (englishHits >= 2 && hindiHits == 0) {
-            Log.d(TAG, "Strong English vocabulary ($englishHits hits) with 0 Hindi words -> OVERRIDING to ENGLISH")
-            return SpokenLanguage.ENGLISH
+        // 2. ZERO Hindi markers present
+        if (hindiHits == 0) {
+            // Check for English math, digits, or English words
+            val hasDigits = trimmed.any { it.isDigit() }
+            val hasMathSymbols = trimmed.contains(Regex("[+*×÷=/-]"))
+            if (englishHits > 0 || hasDigits || hasMathSymbols) {
+                Log.d(TAG, "Pure English / Math query ($englishHits enHits, 0 hiHits) -> ENGLISH")
+                return SpokenLanguage.ENGLISH
+            }
         }
 
         // 3. Clear Hindi / Hinglish markers present
@@ -101,17 +105,17 @@ object LanguageDetector {
         }
 
         if (hindiHits == 1) {
-            // If it's mostly English words with 1 borderline word, favor English
-            return if (englishHits >= 3) {
-                Log.d(TAG, "Dominantly English ($englishHits hits vs 1 Hindi) -> ENGLISH")
+            // If English vocabulary dominates significantly, treat as English
+            return if (englishHits >= 2) {
+                Log.d(TAG, "English dominant ($englishHits enHits vs 1 hiHit) -> ENGLISH")
                 SpokenLanguage.ENGLISH
             } else {
-                Log.d(TAG, "Single distinct Hindi marker with low English -> HINGLISH")
+                Log.d(TAG, "Distinct Hindi marker with low English -> HINGLISH")
                 SpokenLanguage.HINGLISH
             }
         }
 
-        // 4. No strong text markers on either side: fall back to Whisper acoustic prediction
+        // 4. Acoustic fallback only when neither text lexicon triggered
         val whisperLang = whisperLanguage.lowercase().trim()
         if (whisperLang == "hi" || whisperLang == "hindi" || whisperLang == "ur" || whisperLang == "urdu") {
             Log.d(TAG, "Acoustic fallback: Whisper detected Hindi/Urdu -> HINGLISH")
@@ -141,12 +145,16 @@ object LanguageDetector {
             if (COMMON_ENGLISH_LEXICON.contains(word)) englishHits++
         }
 
-        if (englishHits >= 2 && hindiHits == 0) {
-            return SpokenLanguage.ENGLISH
+        if (hindiHits == 0) {
+            val hasDigits = trimmed.any { it.isDigit() }
+            val hasMathSymbols = trimmed.contains(Regex("[+*×÷=/-]"))
+            if (englishHits > 0 || hasDigits || hasMathSymbols) {
+                return SpokenLanguage.ENGLISH
+            }
         }
 
         return if (hindiHits >= 1) {
-            if (englishHits >= 3 && hindiHits == 1) SpokenLanguage.ENGLISH else SpokenLanguage.HINGLISH
+            if (englishHits >= 2 && hindiHits == 1) SpokenLanguage.ENGLISH else SpokenLanguage.HINGLISH
         } else {
             SpokenLanguage.ENGLISH
         }

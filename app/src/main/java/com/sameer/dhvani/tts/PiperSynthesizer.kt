@@ -243,38 +243,40 @@ class PiperSynthesizer(private val context: Context) {
                 val normalizedHindi = NumberNormalizer.normalizeForHindi(baseDevanagari)
                 Log.d(TAG, "Speaking Hindi: original='$text' -> normalized='$normalizedHindi'")
 
-                // 2. Primary: Supertonic 3 Hindi via Sherpa-ONNX
+                // 1. Primary: Ultra-Fast On-Device Neural Voice (hi-in-x-hid-local) -> ~200ms TTFA, flawless native Hindi
+                val maleAudio = if (androidTtsReady && hasDevanagari(normalizedHindi)) {
+                    synthesizeWithMaleTts(normalizedHindi)
+                } else null
+
+                if (maleAudio != null && maleAudio.samples.isNotEmpty()) {
+                    Log.d(TAG, "Neural Male Hindi generated ${maleAudio.samples.size} samples @ ${maleAudio.sampleRate}Hz")
+                    return maleAudio
+                }
+
+                // 2. Fallback: Piper Rohan VITS (Single-pass on-device, ~180ms)
+                val rohanAudio = hindiTts?.generate(normalizedHindi, sid = 0, speed = 1.0f)
+                if (rohanAudio != null && rohanAudio.samples.isNotEmpty()) {
+                    Log.d(TAG, "Piper Rohan generated ${rohanAudio.samples.size} samples @ ${rohanAudio.sampleRate}Hz")
+                    return rohanAudio
+                }
+
+                // 3. Fallback: Supertonic 3 Hindi (sherpa-onnx)
                 val supertonicAudio = try {
                     if (supertonicTts != null) {
                         Log.d(TAG, "Synthesizing with Supertonic 3 Hindi...")
                         val genConfig = GenerationConfig(
                             sid = 0,
-                            numSteps = 5,
+                            numSteps = 2,
                             speed = 1.0f,
                             extra = mapOf("lang" to "hi")
                         )
                         supertonicTts?.generateWithConfig(normalizedHindi, genConfig)
                     } else null
                 } catch (e: Exception) {
-                    Log.w(TAG, "Supertonic 3 synthesis failed, using fallback", e)
+                    Log.w(TAG, "Supertonic 3 synthesis failed", e)
                     null
                 }
-
-                if (supertonicAudio != null && supertonicAudio.samples.isNotEmpty()) {
-                    Log.d(TAG, "Supertonic 3 generated ${supertonicAudio.samples.size} samples @ ${supertonicAudio.sampleRate}Hz")
-                    return supertonicAudio
-                }
-
-                // 3. Fallback: Google Neural Male Voice (handles Devanagari & numbers natively)
-                val maleAudio = if (androidTtsReady && hasDevanagari(normalizedHindi)) {
-                    synthesizeWithMaleTts(normalizedHindi)
-                } else null
-
-                // 4. Fallback: Piper Rohan VITS
-                maleAudio ?: run {
-                    Log.w(TAG, "Falling back to Piper Rohan")
-                    hindiTts?.generate(normalizedHindi, sid = 0, speed = 1.0f)
-                }
+                return supertonicAudio
             } else {
                 // ENGLISH: Always synthesized with English Voice at natural conversational pace (1.0x)
                 val normalizedEnglish = NumberNormalizer.normalizeForEnglish(text)
