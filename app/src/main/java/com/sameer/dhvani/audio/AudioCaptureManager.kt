@@ -117,7 +117,7 @@ class AudioCaptureManager(
 
             audioRecord?.startRecording()
             isRecording = true
-            isPaused = false
+            isPaused = true
             wasSpeechDetected = false
 
             synchronized(vadLock) {
@@ -269,6 +269,47 @@ class AudioCaptureManager(
             isPaused = false
             preSpeechRingBuffer.clear()
             preRollForCurrentUtterance = null
+        }
+    }
+
+    /**
+     * Called when user explicitly taps to stop listening.
+     * If user was actively speaking, flushes any captured speech segment immediately.
+     */
+    fun stopListeningAndFlush(): FloatArray? {
+        Log.d(TAG, "stopListeningAndFlush() called")
+        isPaused = true
+        synchronized(vadLock) {
+            val detector = vad ?: return null
+            try {
+                detector.flush()
+                var result: FloatArray? = null
+                while (!detector.empty()) {
+                    val segment = detector.front()
+                    val speechSamples = segment.samples
+                    detector.pop()
+                    if (speechSamples.isNotEmpty()) {
+                        val preRoll = preRollForCurrentUtterance
+                        val fullUtterance = if (preRoll != null && preRoll.isNotEmpty()) {
+                            val merged = FloatArray(preRoll.size + speechSamples.size)
+                            System.arraycopy(preRoll, 0, merged, 0, preRoll.size)
+                            System.arraycopy(speechSamples, 0, merged, preRoll.size, speechSamples.size)
+                            merged
+                        } else {
+                            speechSamples
+                        }
+                        result = fullUtterance
+                    }
+                }
+                detector.reset()
+                wasSpeechDetected = false
+                preSpeechRingBuffer.clear()
+                preRollForCurrentUtterance = null
+                return result
+            } catch (e: Exception) {
+                Log.e(TAG, "Error flushing VAD", e)
+                return null
+            }
         }
     }
 

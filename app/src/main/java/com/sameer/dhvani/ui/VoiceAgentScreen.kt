@@ -431,10 +431,11 @@ fun VoiceAgentScreen(
 
                 Spacer(modifier = Modifier.height(8.dp))
 
-                // Organic Status Pill
+                // Organic Status Pill (Tap to start / Tap to stop)
                 StatusIndicatorPill(
                     state = state,
-                    isDarkMode = isDarkMode
+                    isDarkMode = isDarkMode,
+                    onClick = { pipeline.onOrbTapped() }
                 )
             }
         }
@@ -1004,39 +1005,43 @@ fun LivingVoiceCore(
 @Composable
 fun StatusIndicatorPill(
     state: AgentState,
-    isDarkMode: Boolean
+    isDarkMode: Boolean,
+    onClick: () -> Unit
 ) {
     val pillBg = if (isDarkMode) Color(0xFF131A2A) else Color(0xFFF3F4F6)
-    val pillBorder = if (isDarkMode) Color(0x1AFFFFFF) else Color(0x10000000)
+    val pillBorder = if (isDarkMode) Color(0x2E4F46E5) else Color(0x1A4F46E5)
 
     val (statusText, statusDotColor) = when (state) {
-        AgentState.IDLE -> "Tap orb or speak naturally" to Color(0xFF94A3B8)
-        AgentState.LISTENING -> "Listening to you..." to GreenLive
-        AgentState.THINKING -> "Thinking..." to SaffronWarm
-        AgentState.SPEAKING -> "Speaking · Tap orb to interrupt" to VioletSoft
+        AgentState.IDLE -> "Tap to speak" to Color(0xFF94A3B8)
+        AgentState.LISTENING -> "Listening... · Tap to stop" to GreenLive
+        AgentState.THINKING -> "Thinking... · Tap to cancel" to SaffronWarm
+        AgentState.SPEAKING -> "Speaking · Tap to stop" to VioletSoft
     }
 
     Surface(
+        onClick = onClick,
         shape = RoundedCornerShape(20.dp),
         color = pillBg,
-        modifier = Modifier.border(1.dp, pillBorder, RoundedCornerShape(20.dp))
+        modifier = Modifier
+            .border(1.dp, pillBorder, RoundedCornerShape(20.dp))
+            .shadow(if (isDarkMode) 0.dp else 2.dp, RoundedCornerShape(20.dp))
     ) {
         Row(
             verticalAlignment = Alignment.CenterVertically,
-            modifier = Modifier.padding(horizontal = 14.dp, vertical = 6.dp)
+            modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)
         ) {
             Box(
                 modifier = Modifier
-                    .size(7.dp)
+                    .size(8.dp)
                     .clip(CircleShape)
                     .background(statusDotColor)
             )
-            Spacer(modifier = Modifier.width(7.dp))
+            Spacer(modifier = Modifier.width(8.dp))
             Text(
                 text = statusText,
-                fontSize = 11.sp,
-                fontWeight = FontWeight.Medium,
-                color = if (isDarkMode) DarkTextSub else LightTextSub
+                fontSize = 12.sp,
+                fontWeight = FontWeight.SemiBold,
+                color = if (isDarkMode) DarkTextMain else LightTextMain
             )
         }
     }

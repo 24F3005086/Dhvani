@@ -101,10 +101,10 @@ class VoiceAgentPipeline(
                     // Critical: wait for acoustic reverberations in the room to fade
                     delay(ECHO_COOLDOWN_MS)
                     if (!audioPlayback.isActivelyPlaying && _agentState.value == AgentState.SPEAKING) {
-                        Log.d(TAG, "Echo cooldown complete: resuming listening")
+                        Log.d(TAG, "Echo cooldown complete: returning to IDLE (waiting for tap)")
                         _agentState.value = AgentState.IDLE
                         isProcessing = false
-                        audioCapture.resumeListening()
+                        audioCapture.pauseListening()
                     }
                 }
             }
@@ -127,6 +127,7 @@ class VoiceAgentPipeline(
     fun start() {
         isProcessing = false
         audioCapture.startListening()
+        audioCapture.pauseListening()
         _agentState.value = AgentState.IDLE
     }
 
@@ -141,28 +142,43 @@ class VoiceAgentPipeline(
     }
 
     /**
-     * Tapping the center orb can trigger barge-in or manual listen toggle.
+     * Tapping the center orb or the tap button toggles listening:
+     * - If IDLE: starts listening.
+     * - If LISTENING: stops listening (flushes speech if spoken, or pauses).
+     * - If THINKING or SPEAKING: stops/cancels immediately and returns to IDLE.
      */
     fun onOrbTapped() {
-        if (_agentState.value == AgentState.SPEAKING || audioPlayback.isActivelyPlaying) {
-            // Barge-in interruption
-            Log.d(TAG, "User tapped Orb during speech: executing barge-in")
-            bargeIn()
-        } else if (_agentState.value == AgentState.IDLE) {
-            Log.d(TAG, "User tapped Orb while IDLE: listening for speech")
-            audioCapture.resumeListening()
-            _agentState.value = AgentState.LISTENING
+        when (_agentState.value) {
+            AgentState.IDLE -> {
+                Log.d(TAG, "User tapped: START listening")
+                isProcessing = false
+                audioCapture.resumeListening()
+                _agentState.value = AgentState.LISTENING
+            }
+            AgentState.LISTENING -> {
+                Log.d(TAG, "User tapped: STOP listening")
+                val flushedUtterance = audioCapture.stopListeningAndFlush()
+                if (flushedUtterance != null && flushedUtterance.isNotEmpty()) {
+                    Log.d(TAG, "Flushed active speech utterance on tap stop: ${flushedUtterance.size} samples")
+                    handleSpeechUtterance(flushedUtterance)
+                } else {
+                    audioCapture.pauseListening()
+                    _agentState.value = AgentState.IDLE
+                    _audioLevel.value = 0f
+                }
+            }
+            AgentState.THINKING, AgentState.SPEAKING -> {
+                Log.d(TAG, "User tapped during ${_agentState.value}: STOPPING")
+                activePipelineJob?.cancel()
+                activePipelineJob = null
+                audioPlayback.bargeIn()
+                groqClient.cancel()
+                isProcessing = false
+                audioCapture.pauseListening()
+                _agentState.value = AgentState.IDLE
+                _audioLevel.value = 0f
+            }
         }
-    }
-
-    private fun bargeIn() {
-        activePipelineJob?.cancel()
-        activePipelineJob = null
-        audioPlayback.bargeIn()
-        groqClient.cancel()
-        isProcessing = false
-        audioCapture.resumeListening()
-        _agentState.value = AgentState.LISTENING
     }
 
     /**
