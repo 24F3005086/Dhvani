@@ -30,7 +30,18 @@ object ScriptTransliteration {
         "परिसर" to "parisar", "पुस्तकालय" to "pustakalaya", "भोजन" to "bhojan", "कक्ष" to "kaksh",
         "वर्तमान" to "vartaman", "श्री" to "Shri", "नरेंद्र" to "Narendra", "मोदी" to "Modi",
         "आवेदन" to "aavedan", "वेबसाइट" to "website", "आधिकारिक" to "adhikarik", "प्रवेश" to "pravesh",
-        "लगभग" to "lagbhag", "अट्ठाईस" to "atthaees", "समय" to "samay", "ट्रैफिक" to "traffic"
+        "लगभग" to "lagbhag", "अट्ठाईस" to "atthaees", "समय" to "samay", "ट्रैफिक" to "traffic",
+        // Postpositions & Common Grammar
+        "में" to "mein", "से" to "se", "का" to "ka", "की" to "ki", "के" to "ke", "को" to "ko", "पे" to "pe",
+        // Navigation & Travel Loanwords
+        "सिटी" to "city", "सिटि" to "city", "सेंटर" to "center", "सेन्टर" to "center",
+        "एयरपोर्ट" to "airport", "एअरपोर्ट" to "airport", "डिस्टेंस" to "distance", "डिस्टन्स" to "distance", "डिस्टेन्स" to "distance",
+        "किलोमीटर" to "km", "किमी" to "km", "रूट" to "route", "मैप" to "map", "लोकेशन" to "location",
+        // Schedule & Routine Variants
+        "सेड्यूल" to "schedule", "शिड्यूल" to "schedule", "सिड्यूल" to "schedule",
+        "निरेस्ट" to "nearest", "नियरस्ट" to "nearest",
+        "लगा" to "laga", "लगाओ" to "lagao", "लगादो" to "laga do",
+        "अपडेट" to "update", "कॉल" to "call", "मैसेज" to "message", "फोन" to "phone"
     )
 
     private val ROMAN_TO_DEVANAGARI = mutableMapOf<String, String>().apply {
@@ -68,6 +79,11 @@ object ScriptTransliteration {
         put("chai", "चाय")
         put("peeni", "पीनी")
         put("main", "मेन")
+        put("city", "सिटी")
+        put("center", "सेंटर")
+        put("centre", "सेंटर")
+        put("airport", "एयरपोर्ट")
+        put("distance", "डिस्टेंस")
     }
 
     private val DEV_CONSONANTS = mapOf(
