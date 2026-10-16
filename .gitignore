@@ -17,3 +17,5 @@ downloads/
 *.aar
 *.onnx
 *.tar.bz2
+
+*.apk

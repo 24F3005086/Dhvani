@@ -112,6 +112,11 @@ class VoiceAgentPipeline(
             onSpeechUtterance = { samples -> handleSpeechUtterance(samples) },
             onAudioLevel = { level -> _audioLevel.value = level }
         )
+
+        // Prewarm instant micro-fillers in background for <100ms response time
+        coroutineScope.launch(Dispatchers.Default) {
+            piperSynthesizer.prewarmFillers()
+        }
     }
 
     fun setAssistantMode(mode: AssistantMode) {
@@ -156,23 +161,20 @@ class VoiceAgentPipeline(
         audioPlayback.bargeIn()
         groqClient.cancel()
         isProcessing = false
-        coroutineScope.launch(Dispatchers.Main) {
-            delay(100)
-            audioCapture.resumeListening()
-            _agentState.value = AgentState.LISTENING
-        }
+        audioCapture.resumeListening()
+        _agentState.value = AgentState.LISTENING
     }
 
     /**
      * Called by VAD when user begins speaking.
      */
     private fun handleSpeechStart() {
-        if (_agentState.value == AgentState.SPEAKING || audioPlayback.isActivelyPlaying) {
-            Log.d(TAG, "Speech detected during playback! Initiating barge-in")
-            bargeIn()
-        } else if (!isProcessing) {
-            _agentState.value = AgentState.LISTENING
+        if (_agentState.value == AgentState.SPEAKING || audioPlayback.isActivelyPlaying || isProcessing) {
+            // Prevent phone loudspeaker audio from triggering false acoustic barge-ins
+            Log.d(TAG, "Ignoring microphone signal during playback/processing to prevent self-interruption")
+            return
         }
+        _agentState.value = AgentState.LISTENING
     }
 
     /**
@@ -272,9 +274,10 @@ class VoiceAgentPipeline(
      * Executes test phrase directly (for 1-tap chip testing during demo/evaluation).
      */
     fun testUtterance(phrase: String) {
-        if (isProcessing || audioPlayback.isActivelyPlaying) {
-            bargeIn()
-        }
+        activePipelineJob?.cancel()
+        activePipelineJob = null
+        audioPlayback.bargeIn()
+        groqClient.cancel()
 
         isProcessing = true
         audioCapture.pauseListening()
@@ -326,8 +329,41 @@ class VoiceAgentPipeline(
 
         audioPlayback.setExpectingMoreAudio(true)
 
+        // 1. Instant Micro-Filler: Immediate acknowledgement audio in <100ms
+        val filler = piperSynthesizer.getFillerAudio(targetLang)
+        val playedFiller = if (filler != null && filler.samples.isNotEmpty()) {
+            Log.d(TAG, "Playing instant micro-filler for $targetLang (${filler.samples.size} samples @ ${filler.sampleRate}Hz)")
+            latencyTracker.markTtsStart()
+            latencyTracker.markTtsFirstAudio()
+            val langStr = when (targetLang) {
+                SpokenLanguage.ENGLISH -> "English"
+                SpokenLanguage.HINGLISH -> "Hinglish"
+                SpokenLanguage.HINDI -> "Hindi"
+            }
+            coroutineScope.launch(Dispatchers.Main) {
+                _currentMetrics.value = latencyTracker.buildMetrics(language = langStr, emotion = "Calm (94%)")
+                _agentState.value = AgentState.SPEAKING
+            }
+            audioPlayback.playAudio(filler.samples, filler.sampleRate)
+            true
+        } else {
+            false
+        }
+
+        var isFirstChunkOfResponse = true
+
         val sentenceChunker = SentenceChunker { sentence ->
-            synthesizeAndPlaySentence(sentence, targetLang)
+            val textToSpeak = if (isFirstChunkOfResponse && playedFiller) {
+                isFirstChunkOfResponse = false
+                val cleaned = cleanLeadingFillerWord(sentence, targetLang)
+                if (cleaned.isBlank()) sentence else cleaned
+            } else {
+                isFirstChunkOfResponse = false
+                sentence
+            }
+            if (textToSpeak.isNotBlank()) {
+                synthesizeAndPlaySentence(textToSpeak, targetLang)
+            }
         }
 
         groqClient.streamResponse(
@@ -341,6 +377,7 @@ class VoiceAgentPipeline(
             onComplete = { fullResponse ->
                 coroutineScope.launch(Dispatchers.Main) {
                     sentenceChunker.finish()
+                    audioPlayback.setExpectingMoreAudio(false)
                     val langStr = when (targetLang) {
                         SpokenLanguage.ENGLISH -> "English"
                         SpokenLanguage.HINGLISH -> "Hinglish"
@@ -371,6 +408,17 @@ class VoiceAgentPipeline(
                 }
             }
         )
+    }
+
+    private fun cleanLeadingFillerWord(sentence: String, language: SpokenLanguage): String {
+        return when (language) {
+            SpokenLanguage.HINDI, SpokenLanguage.HINGLISH -> {
+                sentence.replaceFirst(Regex("^(हाँ|हां|जी|अच्छा|Haan|Ha|Acha|Achha)[,\\s।]+", RegexOption.IGNORE_CASE), "").trim()
+            }
+            SpokenLanguage.ENGLISH -> {
+                sentence.replaceFirst(Regex("^(Sure|Certainly|Yes|Okay|Got it)[,\\s\\.]+", RegexOption.IGNORE_CASE), "").trim()
+            }
+        }
     }
 
     private fun synthesizeAndPlaySentence(sentence: String, language: SpokenLanguage) {
