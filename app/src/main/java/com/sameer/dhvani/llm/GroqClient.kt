@@ -40,16 +40,16 @@ class GroqClient(
         private const val MODEL_STT = "whisper-large-v3" // Full 32-layer decoder for zero phonetic hallucinations
 
         private const val PROMPT_HINT_ENGLISH =
-            "Dhvani voice assistant for IISc Bangalore. Bangalore weather, schedule, meetings, alarms at 7 AM, campus canteen, calculations, science, technology."
+            "Dhvani voice assistant for IISc Bangalore. Bangalore, Chennai, Delhi, Mumbai. Next meeting, schedule, calendar. Distance, kilometer, route, traffic. Bangalore weather, temperature, alarms at 7 AM, campus canteen, calculations, science, technology."
 
         private const val PROMPT_HINT_HINGLISH =
-            "Dhvani voice assistant for IISc Bangalore. Bangalore ka weather kaisa hai, meeting schedule, kal subah 7 baje ka alarm laga do, campus mein nearest canteen kahan hai, chai peeni hai, 500 rupaye mein se 150 kharch ho gaye toh kitne bache, namaste, schedule kya hai."
+            "Dhvani voice assistant for IISc Bangalore. Chennai se Bangalore ka distance kitna hai, meri next meeting kab hai, Bangalore ka weather kaisa hai, meeting schedule, kal subah 7 baje ka alarm laga do, campus mein nearest canteen kahan hai, chai peeni hai, 500 rupaye mein se 150 kharch ho gaye toh kitne bache, namaste, schedule kya hai, distance, kilometer."
 
         private const val PROMPT_HINT_HINDI =
-            "ध्वनि, आईआईएससी बैंगलोर। नमस्ते, कल बैंगलोर का मौसम कैसा रहेगा, मीटिंग, कल सुबह सात बजे का अलार्म लगा दो, कैंटीन कहाँ है, पाँच सौ रुपये में से एक सौ पचास रुपये खर्च हो गए तो कितने बचे, भारत के प्रधानमंत्री कौन हैं।"
+            "ध्वनि, आईआईएससी बैंगलोर। चेन्नई से बैंगलोर की दूरी या डिस्टेंस कितना है, अगली मीटिंग, कल बैंगलोर का मौसम कैसा रहेगा, कल सुबह सात बजे का अलार्म लगा दो, कैंटीन कहाँ है, पाँच सौ रुपये में से एक सौ पचास रुपये खर्च हो गए तो कितने बचे, भारत के प्रधानमंत्री कौन हैं, किलोमीटर।"
 
         private const val PROMPT_HINT_AUTO =
-            "Dhvani voice assistant for IISc Bangalore. Weather, alarm, meeting, campus, canteen, chai, 500 rupaye, 150 kharch ho gaye, kitne bache, namaste, मौसम, प्रधानमंत्री, रुपये, खर्च।"
+            "Dhvani voice assistant for IISc Bangalore. Chennai, Bangalore, Delhi, Mumbai. Next meeting, schedule, calendar. Distance, kilometer, route. Weather, temperature, alarm, campus canteen, chai, 500 rupaye, 150 kharch ho gaye, kitne bache, namaste, मौसम, प्रधानमंत्री, रुपये, खर्च, चेन्नई, दूरी, किलोमीटर।"
 
         fun stripThinkingTags(text: String): String {
             return text

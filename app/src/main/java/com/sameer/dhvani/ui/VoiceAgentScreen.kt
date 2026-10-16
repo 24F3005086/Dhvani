@@ -382,6 +382,8 @@ fun VoiceAgentScreen(
                 val promptSparks = listOf(
                     "🌤️ Bangalore weather" to "What is the weather forecast for Bangalore tomorrow?",
                     "⏰ 7 baje alarm (Hinglish)" to "Mujhe kal subah 7 baje ka alarm set karna hai.",
+                    "🚗 Chennai distance (Hinglish)" to "Chennai se Bangalore ka distance kya hai?",
+                    "📅 Next meeting (Hinglish)" to "Meri next meeting kab hai?",
                     "💰 500 me se 150 (Hinglish)" to "Agar mere paas 500 rupaye hain aur 150 kharch ho gaye, toh kitne bache?",
                     "🏛️ Campus canteen (Hinglish)" to "Campus mein nearest canteen kahan hai, mujhe chai peeni hai?",
                     "🇮🇳 Pradhan Mantri (Hindi)" to "भारत के वर्तमान प्रधानमंत्री कौन हैं?",

@@ -56,9 +56,16 @@ class PiperSynthesizer(private val context: Context) {
             "wahi" to "वहीं", "jaaiye" to "जाइए", "main" to "मेन", "bache" to "बचे",
             "bachte" to "बचते", "rupaye" to "रुपये", "rupees" to "रुपये", "ghatane" to "घटाने",
             "kharch" to "खर्च", "suhana" to "सुहावना", "suhavana" to "सुहावना",
-            "rahega" to "रहेगा", "rahegi" to "रहेगी", "hoga" to "होगा", "hogi" to "होगी",
             "hi" to "ही", "bhi" to "भी", "toh" to "तो", "to" to "तो", "agar" to "अगर",
-            "kitne" to "कितने", "kitna" to "कितना", "kitni" to "कितनी", "chahiye" to "चाहिए"
+            "kitne" to "कितने", "kitna" to "कितना", "kitni" to "कितनी", "chahiye" to "चाहिए",
+            "distance" to "डिस्टेंस", "distens" to "डिस्टेंस",
+            "kilometer" to "किलोमीटर", "kilometre" to "किलोमीटर", "kilometers" to "किलोमीटर", "km" to "किलोमीटर",
+            "chennai" to "चेन्नई", "cheneee" to "चेन्नई", "chenai" to "चेन्नई",
+            "delhi" to "दिल्ली", "mumbai" to "मुंबई", "hyderabad" to "हैदराबाद",
+            "lagbhag" to "लगभग", "agli" to "अगली", "pehli" to "पहली",
+            "city" to "सिटी", "center" to "सेंटर", "centre" to "सेंटर", "airport" to "एयरपोर्ट",
+            "route" to "रूट", "map" to "मैप", "speed" to "स्पीड", "train" to "ट्रेन", "flight" to "फ्लाइट",
+            "bengaluru" to "बैंगलोर", "benglorb" to "बैंगलोर", "nekst" to "नेक्स्ट"
         )
 
         private val CONSONANT_MAP = mapOf(
@@ -67,7 +74,7 @@ class PiperSynthesizer(private val context: Context) {
             "k" to "क", "g" to "ग", "j" to "ज", "t" to "त", "d" to "द",
             "n" to "न", "p" to "प", "b" to "ब", "m" to "म", "y" to "य",
             "r" to "र", "l" to "ल", "v" to "व", "w" to "व", "s" to "स",
-            "h" to "ह", "f" to "फ", "z" to "ज़"
+            "h" to "ह", "f" to "फ", "z" to "ज़", "c" to "क", "ce" to "स", "ci" to "सि", "cy" to "सि"
         )
 
         private val VOWEL_MATRA_MAP = mapOf(

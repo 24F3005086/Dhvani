@@ -36,8 +36,10 @@ object ScriptTransliteration {
         // Navigation & Travel Loanwords
         "सिटी" to "city", "सिटि" to "city", "सेंटर" to "center", "सेन्टर" to "center",
         "एयरपोर्ट" to "airport", "एअरपोर्ट" to "airport", "डिस्टेंस" to "distance", "डिस्टन्स" to "distance", "डिस्टेन्स" to "distance",
-        "किलोमीटर" to "km", "किमी" to "km", "रूट" to "route", "मैप" to "map", "लोकेशन" to "location",
+        "किलोमीटर" to "kilometer", "किमी" to "km", "रूट" to "route", "मैप" to "map", "लोकेशन" to "location",
+        "चेन्नई" to "Chennai", "दिल्ली" to "Delhi", "मुंबई" to "Mumbai", "हैदराबाद" to "Hyderabad",
         // Schedule & Routine Variants
+        "नेक्स्ट" to "next",
         "सेड्यूल" to "schedule", "शिड्यूल" to "schedule", "सिड्यूल" to "schedule",
         "निरेस्ट" to "nearest", "नियरस्ट" to "nearest",
         "लगा" to "laga", "लगाओ" to "lagao", "लगादो" to "laga do",
@@ -81,9 +83,43 @@ object ScriptTransliteration {
         put("main", "मेन")
         put("city", "सिटी")
         put("center", "सेंटर")
-        put("centre", "सेंटर")
         put("airport", "एयरपोर्ट")
         put("distance", "डिस्टेंस")
+        put("distens", "डिस्टेंस")
+        put("kilometer", "किलोमीटर")
+        put("kilometre", "किलोमीटर")
+        put("kilometers", "किलोमीटर")
+        put("km", "किलोमीटर")
+        put("chennai", "चेन्नई")
+        put("cheneee", "चेन्नई")
+        put("chenai", "चेन्नई")
+        put("delhi", "दिल्ली")
+        put("mumbai", "मुंबई")
+        put("hyderabad", "हैदराबाद")
+        put("next", "नेक्स्ट")
+        put("nekst", "नेक्स्ट")
+        put("lagbhag", "लगभग")
+    }
+
+    /**
+     * Cleans common Whisper ASR phonetic transcription slips for Indian English / Hinglish queries.
+     */
+    fun cleanSpokenTranscript(raw: String): String {
+        var text = raw
+        val corrections = listOf(
+            Regex("(?i)\\b(cheneee|chenee|chenai|chinnai)\\b") to "Chennai",
+            Regex("(?i)\\b(benglorb|benglor|bengaluru|banglore)\\b") to "Bangalore",
+            Regex("(?i)\\b(nekst|nyext|nnext)\\b") to "next",
+            Regex("(?i)\\b(distens|distence|distenc)\\b") to "distance",
+            Regex("(?i)\\b(kilometers|kilometre|kilometres|kilomitar)\\b") to "kilometer",
+            Regex("(?i)\\b(shedule|sedule|seydool|sedeyool)\\b") to "schedule",
+            Regex("(?i)\\b(cantene|kanteen)\\b") to "canteen",
+            Regex("(?i)\\b(campas|kampos)\\b") to "campus"
+        )
+        for ((regex, replacement) in corrections) {
+            text = text.replace(regex, replacement)
+        }
+        return text
     }
 
     private val DEV_CONSONANTS = mapOf(

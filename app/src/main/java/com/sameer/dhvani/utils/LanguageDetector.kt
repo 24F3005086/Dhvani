@@ -60,6 +60,8 @@ object LanguageDetector {
         "reminder", "alarm", "meeting", "weather", "forecast", "temperature", "bangalore",
         "tomorrow", "today", "yesterday", "morning", "afternoon", "evening", "night",
         "schedule", "next", "time", "clock", "traffic", "flight", "train", "car", "route",
+        "chennai", "distance", "kilometer", "kilometre", "km", "delhi", "mumbai", "hyderabad",
+        "campus", "canteen", "nearest",
         "hello", "hi", "hey", "please", "thanks", "thank", "good", "fine", "okay",
         "question", "answer", "about", "with", "without", "from", "for", "in", "on", "at",
         "numbers", "number", "zero", "one", "two", "three", "four", "five", "six", "seven",
@@ -84,11 +86,13 @@ object LanguageDetector {
 
         // Travel & Navigation
         "सिटी", "सिटि", "सेंटर", "सेन्टर", "एयरपोर्ट", "एअरपोर्ट", "हवाईअड्डा",
+        "चेन्नई", "दिल्ली", "मुंबई", "हैदराबाद",
         "फ्लाइट", "प्लेन", "टिकट", "ट्रेन", "मेट्रो", "बस", "कैब", "टैक्सी", "ऑटो",
         "स्टेशन", "स्टॉप", "रूट", "ट्रैफिक", "हाईवे", "रोड", "स्ट्रीट", "लोकेशन", "मैप", "नेविगेशन",
         "डिस्टेंस", "डिस्टन्स", "डिस्टेन्स", "किलोमीटर", "किमी", "मीटर", "माइल", "स्पीड",
 
         // Scheduling & Routine
+        "नेक्स्ट",
         "शेड्यूल", "सेड्यूल", "शिड्यूल", "रूटीन", "टाइम", "टाइमिंग", "आवर", "ऑवर", "मिनट", "सेकंड",
         "अलार्म", "अलारम", "टाइमर", "क्लॉक", "रिमाइंडर", "रिमैन्डर", "कैलेंडर",
         "मीटिंग", "अपॉइंटमेंट", "प्रेजेंटेशन", "प्रेज़ेंटेशन", "प्रजेंटेशन", "स्लाइड्स", "रिपोर्ट",

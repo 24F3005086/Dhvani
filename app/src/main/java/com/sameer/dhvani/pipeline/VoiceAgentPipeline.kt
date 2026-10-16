@@ -231,7 +231,8 @@ class VoiceAgentPipeline(
                     com.sameer.dhvani.llm.TranscriptionResult(text, lang, isOnDevice = true)
                 }
 
-                val transcript = sttResult.transcript.trim()
+                val rawTranscript = sttResult.transcript.trim()
+                val transcript = ScriptTransliteration.cleanSpokenTranscript(rawTranscript)
                 if (transcript.isBlank()) {
                     Log.d(TAG, "Blank transcript, returning to IDLE")
                     coroutineScope.launch(Dispatchers.Main) {
