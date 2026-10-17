@@ -50,8 +50,15 @@ cp vits-piper-en_US-amy-medium/en_US-amy-medium.onnx.json "$ASSETS_DIR/tts-engli
 cp vits-piper-en_US-amy-medium/tokens.txt "$ASSETS_DIR/tts-english/"
 
 # 6. sherpa-onnx AAR
-echo "--> [6/6] Downloading sherpa-onnx AAR..."
+echo "--> [6/7] Downloading sherpa-onnx AAR..."
 mkdir -p "../app/libs"
 curl -L --retry 5 -o "../app/libs/sherpa-onnx-1.13.8.aar" "https://github.com/k2-fsa/sherpa-onnx/releases/download/v1.13.8/sherpa-onnx-1.13.8.aar"
+
+# 7. Supertonic 3 Hindi Neural TTS
+echo "--> [7/7] Downloading Supertonic 3 Hindi Flow-Matching TTS..."
+curl -L --retry 5 -o "sherpa-onnx-supertonic-3-tts-int8.tar.bz2" "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/sherpa-onnx-supertonic-3-tts-int8-2026-05-11.tar.bz2"
+tar -xvf "sherpa-onnx-supertonic-3-tts-int8.tar.bz2"
+mkdir -p "$ASSETS_DIR/supertonic-3-hi"
+cp -r sherpa-onnx-supertonic-3-tts-int8-2026-05-11/* "$ASSETS_DIR/supertonic-3-hi/"
 
 echo "=== All on-device models successfully downloaded! ==="

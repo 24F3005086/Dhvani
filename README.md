@@ -160,11 +160,15 @@ Evaluation test phrases verified on the OnePlus physical device:
    git clone https://github.com/24F3005086/Dhvani.git
    cd Dhvani
    ```
-2. Configure your Groq API key in `local.properties`:
+2. Download required on-device models and Sherpa-ONNX runtime:
+   ```bash
+   bash download_models.sh
+   ```
+3. Configure your Groq API key in `local.properties`:
    ```properties
    GROQ_API_KEY=gsk_your_key_here
    ```
-3. Build and install the APK to your device:
+4. Build and install the APK to your device:
    ```bash
    ./gradlew installDebug
    ```
