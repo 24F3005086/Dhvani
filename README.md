@@ -15,7 +15,7 @@
 
 The system addresses three core technical evaluation criteria:
 1. **⚡ Conversational Latency (End-to-End):** **Sub-second pipeline latency (~991 ms)** from speech silence endpoint to first audible audio buffer (`vadSpeechEndTime` $\rightarrow$ `ttsFirstAudioTime`), with total end-to-end conversational turnaround averaging **1.35s – 1.78s** across varied network conditions.
-2. **🎯 Transcription Accuracy:** Robust dual STT pipeline featuring **Whisper Large V3** with contextual prompt biasing for Indian geography and Hinglish code-switching, backed by an on-device **Whisper Tiny INT8 (sherpa-onnx)** offline fallback.
+2. **🎯 Mandatory On-Device STT with Dual-Mode Architecture:** Primary speech recognition runs **100% locally on-device** using quantized **Whisper Tiny INT8 (sherpa-onnx)** directly on the Snapdragon CPU (fulfilling the mandatory assignment requirement), with **Groq Cloud Whisper Large V3** available as an edge-cloud fallback for enhanced Hinglish accuracy.
 3. **🗣️ Pronunciation Quality:** Natural speech synthesis for English, Romanized Hinglish, and Devanagari Hindi using an on-device neural architecture:
    - **English (Piper Edge):** High-speed, natural on-device neural VITS synthesis (`en_US-amy-medium` via sherpa-onnx) with tuned prosodic cadence.
    - **Hindi / Hinglish (Supertonic 3 Hindi):** Modern on-device flow-matching diffusion synthesis (`sherpa-onnx-supertonic-3-tts-int8`) with automated Grapheme-to-Phoneme (G2P) loanword normalization (*distance* $\rightarrow$ *डिस्टेंस*, *kilometer* $\rightarrow$ *किलोमीटर*, *canteen* $\rightarrow$ *कैंटीन*), backed up by Google Neural and Piper Rohan fallbacks.
@@ -48,8 +48,9 @@ The system addresses three core technical evaluation criteria:
                            ▼
 ┌────────────────────────────────────────────────────────┐
 │  Speech-to-Text (STT) Engine                           │
-│  • Primary: Whisper Large V3 with Prompt Biasing       │
-│  • Fallback: On-Device Whisper Tiny INT8 (sherpa-onnx) │
+│  • Primary (Mandatory): On-Device Whisper Tiny INT8    │
+│    (sherpa-onnx C++ runtime on mobile CPU)             │
+│  • Enhanced Mode: Groq Cloud Whisper Large V3          │
 │  • Audio-Level Language Detection ("en" vs "hi")       │
 └──────────────────────────┬─────────────────────────────┘
                            │ (Transcript + Whisper Language)

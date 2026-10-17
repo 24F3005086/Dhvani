@@ -215,20 +215,25 @@ class VoiceAgentPipeline(
         activePipelineJob?.cancel()
         activePipelineJob = coroutineScope.launch(Dispatchers.Default) {
             try {
-                // 1. STT: Groq Cloud Whisper Large V3 (primary) → On-device Whisper Tiny (fallback)
+                // 1. STT: Fully On-Device Whisper Tiny INT8 (Primary, mandatory assignment requirement)
+                // Runs locally on device CPU via Sherpa-ONNX runtime; cloud STT available as fallback
                 val sttResult = try {
-                    val cloudResult = groqClient.transcribeAudio(samples, _assistantMode.value)
-                    if (cloudResult.transcript.isNotBlank()) {
-                        cloudResult
+                    val (localText, localLang) = whisperRecognizer.transcribe(samples)
+                    if (localText.isNotBlank()) {
+                        Log.d(TAG, "On-device STT succeeded: '$localText' (lang=$localLang)")
+                        com.sameer.dhvani.llm.TranscriptionResult(localText, localLang, isOnDevice = true)
                     } else {
-                        Log.w(TAG, "Cloud STT returned empty, using on-device Whisper Tiny")
-                        val (text, lang) = whisperRecognizer.transcribe(samples)
-                        com.sameer.dhvani.llm.TranscriptionResult(text, lang, isOnDevice = true)
+                        Log.w(TAG, "On-device STT returned empty, falling back to cloud STT")
+                        groqClient.transcribeAudio(samples, _assistantMode.value)
                     }
                 } catch (e: Exception) {
-                    Log.w(TAG, "Cloud STT exception, using on-device Whisper Tiny", e)
-                    val (text, lang) = whisperRecognizer.transcribe(samples)
-                    com.sameer.dhvani.llm.TranscriptionResult(text, lang, isOnDevice = true)
+                    Log.w(TAG, "On-device STT exception, falling back to cloud STT", e)
+                    try {
+                        groqClient.transcribeAudio(samples, _assistantMode.value)
+                    } catch (e2: Exception) {
+                        Log.e(TAG, "Both on-device and cloud STT failed", e2)
+                        com.sameer.dhvani.llm.TranscriptionResult("", "")
+                    }
                 }
 
                 val rawTranscript = sttResult.transcript.trim()
@@ -524,13 +529,18 @@ class VoiceAgentPipeline(
                 }
 
                 val transcript = if (queryAudio != null && queryAudio.samples.isNotEmpty()) {
-                    val sttRes = groqClient.transcribeAudio(
-                        samples = queryAudio.samples,
-                        mode = _assistantMode.value,
-                        sampleRate = queryAudio.sampleRate
-                    )
+                    val (localText, _) = whisperRecognizer.transcribe(queryAudio.samples)
                     latencyTracker.markSttEnd()
-                    if (sttRes.transcript.isNotBlank()) sttRes.transcript else phrase
+                    if (localText.isNotBlank()) {
+                        localText
+                    } else {
+                        val sttRes = groqClient.transcribeAudio(
+                            samples = queryAudio.samples,
+                            mode = _assistantMode.value,
+                            sampleRate = queryAudio.sampleRate
+                        )
+                        if (sttRes.transcript.isNotBlank()) sttRes.transcript else phrase
+                    }
                 } else {
                     latencyTracker.markSttEnd()
                     phrase
